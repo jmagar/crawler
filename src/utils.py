@@ -3,6 +3,7 @@
 Utility functions for the Crawl4AI MCP server.
 """
 import os
+import asyncio
 import concurrent.futures
 from typing import List, Dict, Any, Optional, Tuple
 import json
@@ -37,28 +38,43 @@ def get_qdrant_client() -> QdrantClient:
 
 def setup_qdrant_collections(client: QdrantClient):
     """
-    Ensure all necessary collections exist in Qdrant.
+    Ensure all necessary collections exist in Qdrant using modern API.
     """
+    collections_config = [
+        (DOCUMENTS_COLLECTION, "Documents collection for RAG content"),
+        (CODE_EXAMPLES_COLLECTION, "Code examples collection for agentic RAG"),
+        (SOURCES_COLLECTION, "Sources metadata collection"),
+    ]
+    
     try:
-        # Documents collection
-        client.recreate_collection(
-            collection_name=DOCUMENTS_COLLECTION,
-            vectors_config=models.VectorParams(size=EMBEDDING_DIMENSION, distance=models.Distance.COSINE),
-        )
-        # Code examples collection
-        client.recreate_collection(
-            collection_name=CODE_EXAMPLES_COLLECTION,
-            vectors_config=models.VectorParams(size=EMBEDDING_DIMENSION, distance=models.Distance.COSINE),
-        )
-        # Sources collection (no vectors, just metadata)
-        client.recreate_collection(
-            collection_name=SOURCES_COLLECTION,
-            vectors_config=models.VectorParams(size=EMBEDDING_DIMENSION, distance=models.Distance.COSINE), # Dummy vector
-        )
-        print("✓ Qdrant collections checked/created successfully.")
+        for collection_name, description in collections_config:
+            # Check if collection exists
+            try:
+                collection_info = client.get_collection(collection_name)
+                print(f"✓ Collection '{collection_name}' already exists with {collection_info.points_count} points")
+                continue
+            except Exception:
+                # Collection doesn't exist, create it
+                pass
+            
+            try:
+                client.create_collection(
+                    collection_name=collection_name,
+                    vectors_config=models.VectorParams(
+                        size=EMBEDDING_DIMENSION, 
+                        distance=models.Distance.COSINE
+                    ),
+                )
+                print(f"✓ Created collection '{collection_name}' - {description}")
+            except Exception as e:
+                if "already exists" in str(e).lower():
+                    print(f"✓ Collection '{collection_name}' already exists")
+                else:
+                    raise e
+                    
+        print("✓ Qdrant collections setup completed successfully.")
     except Exception as e:
         print(f"Error setting up Qdrant collections: {e}")
-        # This is a critical error, so we might want to raise it
         raise
 
 async def create_embeddings_batch(texts: List[str], max_batch_size: int = 5) -> List[List[float]]:

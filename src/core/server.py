@@ -67,39 +67,72 @@ def log_handler(message: logging.LogRecord):
 async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
     """
     Manages the application's lifecycle for all necessary clients and resources.
+    Enhanced with proper error handling and cleanup for interrupted operations.
     """
-    browser_config = BrowserConfig(headless=True, verbose=False)
-    crawler = AsyncWebCrawler(config=browser_config)
-    await crawler.__aenter__()
+    logger.info("🚀 Initializing Crawl4AI MCP Server...")
     
-    qdrant_client = get_qdrant_client()
-    setup_qdrant_collections(qdrant_client)
+    # Initialize components with proper error handling
+    browser_config = BrowserConfig(
+        headless=True, 
+        verbose=False,
+        browser_type="chromium",  # Explicit browser type
+        sleep_on_close=False,  # Don't wait on browser close
+    )
     
+    crawler = None
+    qdrant_client = None
     reranking_model = None
-    if os.getenv("USE_RERANKING", "false") == "true":
-        try:
-            reranking_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
-        except Exception as e:
-            print(f"Failed to load reranking model: {e}")
-
     knowledge_validator = None
     repo_extractor = None
-    if os.getenv("USE_KNOWLEDGE_GRAPH", "false") == "true" and validate_neo4j_connection():
-        try:
-            neo4j_uri = os.getenv("NEO4J_URI")
-            neo4j_user = os.getenv("NEO4J_USER")
-            neo4j_password = os.getenv("NEO4J_PASSWORD")
-            knowledge_validator = KnowledgeGraphValidator(neo4j_uri, neo4j_user, neo4j_password)
-            await knowledge_validator.initialize()
-            repo_extractor = DirectNeo4jExtractor(neo4j_uri, neo4j_user, neo4j_password)
-            await repo_extractor.initialize()
-            print("✓ Knowledge graph components initialized")
-        except Exception as e:
-            print(f"Failed to initialize Neo4j components: {format_neo4j_error(e)}")
-
-    process_pool = concurrent.futures.ProcessPoolExecutor()
-
+    process_pool = None
+    
     try:
+        # Initialize crawler with retry logic
+        logger.info("📡 Initializing web crawler...")
+        crawler = AsyncWebCrawler(config=browser_config)
+        await crawler.__aenter__()
+        logger.info("✓ Web crawler initialized")
+        
+        # Initialize Qdrant client
+        logger.info("🗄️ Connecting to Qdrant...")
+        qdrant_client = get_qdrant_client()
+        setup_qdrant_collections(qdrant_client)
+        logger.info("✓ Qdrant client initialized")
+        
+        # Initialize reranking model if enabled
+        if os.getenv("USE_RERANKING", "false") == "true":
+            logger.info("🔄 Loading reranking model...")
+            try:
+                reranking_model = CrossEncoder("cross-encoder/ms-marco-MiniLM-L-6-v2")
+                logger.info("✓ Reranking model loaded")
+            except Exception as e:
+                logger.warning(f"Failed to load reranking model: {e}")
+
+        # Initialize knowledge graph components if enabled
+        if os.getenv("USE_KNOWLEDGE_GRAPH", "false") == "true" and validate_neo4j_connection():
+            logger.info("🕸️ Initializing knowledge graph components...")
+            try:
+                neo4j_uri = os.getenv("NEO4J_URI")
+                neo4j_user = os.getenv("NEO4J_USER")
+                neo4j_password = os.getenv("NEO4J_PASSWORD")
+                
+                knowledge_validator = KnowledgeGraphValidator(neo4j_uri, neo4j_user, neo4j_password)
+                await knowledge_validator.initialize()
+                
+                repo_extractor = DirectNeo4jExtractor(neo4j_uri, neo4j_user, neo4j_password)
+                await repo_extractor.initialize()
+                
+                logger.info("✓ Knowledge graph components initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize Neo4j components: {format_neo4j_error(e)}")
+
+        # Initialize process pool
+        logger.info("⚡ Initializing process pool...")
+        process_pool = concurrent.futures.ProcessPoolExecutor()
+        logger.info("✓ Process pool initialized")
+        
+        logger.info("🎉 All components initialized successfully!")
+
         yield Crawl4AIContext(
             crawler=crawler,
             qdrant_client=qdrant_client,
@@ -108,14 +141,56 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
             repo_extractor=repo_extractor,
             process_pool=process_pool
         )
+        
+    except Exception as e:
+        logger.error(f"❌ Failed to initialize server components: {e}")
+        raise
+        
     finally:
-        process_pool.shutdown(wait=True)
-        qdrant_client.close()
-        await crawler.__aexit__(None, None, None)
+        logger.info("🧹 Starting cleanup...")
+        
+        # Cleanup in reverse order of initialization
+        if process_pool:
+            try:
+                logger.info("🔄 Shutting down process pool...")
+                process_pool.shutdown(wait=True)
+                logger.info("✓ Process pool shutdown")
+            except Exception as e:
+                logger.error(f"Error shutting down process pool: {e}")
+
         if knowledge_validator:
-            await knowledge_validator.close()
+            try:
+                logger.info("🕸️ Closing knowledge validator...")
+                await knowledge_validator.close()
+                logger.info("✓ Knowledge validator closed")
+            except Exception as e:
+                logger.error(f"Error closing knowledge validator: {e}")
+
         if repo_extractor:
-            await repo_extractor.close()
+            try:
+                logger.info("📊 Closing repository extractor...")
+                await repo_extractor.close()
+                logger.info("✓ Repository extractor closed")
+            except Exception as e:
+                logger.error(f"Error closing repository extractor: {e}")
+
+        if qdrant_client:
+            try:
+                logger.info("🗄️ Closing Qdrant client...")
+                qdrant_client.close()
+                logger.info("✓ Qdrant client closed")
+            except Exception as e:
+                logger.error(f"Error closing Qdrant client: {e}")
+
+        if crawler:
+            try:
+                logger.info("📡 Closing web crawler...")
+                await crawler.__aexit__(None, None, None)
+                logger.info("✓ Web crawler closed")
+            except Exception as e:
+                logger.error(f"Error closing web crawler: {e}")
+
+        logger.info("✨ Cleanup completed")
 
 mcp = FastMCP(
     "mcp-crawl4ai-rag",
