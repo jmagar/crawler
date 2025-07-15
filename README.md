@@ -73,8 +73,8 @@ The server provides essential web crawling and search tools:
 
 - [Docker/Docker Desktop](https://www.docker.com/products/docker-desktop/) if running the MCP server as a container (recommended)
 - [Python 3.12+](https://www.python.org/downloads/) if running the MCP server directly through uv
-- [Supabase](https://supabase.com/) (database for RAG)
-- [OpenAI API key](https://platform.openai.com/api-keys) (for generating embeddings)
+- [Qdrant](https://qdrant.tech/documentation/overview/) (vector database for RAG)
+- A Hugging Face TEI server for embeddings (e.g., running with Docker)
 - [Neo4j](https://neo4j.com/) (optional, for knowledge graph functionality) - see [Knowledge Graph Setup](#knowledge-graph-setup) section
 
 ## Installation
@@ -124,13 +124,9 @@ The server provides essential web crawling and search tools:
 
 ## Database Setup
 
-Before running the server, you need to set up the database with the pgvector extension:
+This project now uses Qdrant as its vector database. When the server starts, it will automatically create the necessary collections (`documents`, `code_examples`, `sources`) if they don't already exist.
 
-1. Go to the SQL Editor in your Supabase dashboard (create a new project first if necessary)
-
-2. Create a new query and paste the contents of `crawled_pages.sql`
-
-3. Run the query to create the necessary tables and functions
+Ensure your Qdrant instance is running and accessible at the `QDRANT_URL` specified in your `.env` file.
 
 ## Knowledge Graph Setup (Optional)
 
@@ -185,22 +181,24 @@ HOST=0.0.0.0
 PORT=8051
 TRANSPORT=sse
 
-# OpenAI API Configuration
-OPENAI_API_KEY=your_openai_api_key
+# Qdrant Configuration
+QDRANT_URL=http://localhost:6333
+# QDRANT_API_KEY=your_qdrant_api_key (optional)
 
-# LLM for summaries and contextual embeddings
-MODEL_CHOICE=gpt-4.1-nano
+# Embedding Model Configuration
+EMBEDDING_MODEL_URL=http://localhost:8080/embed
+EMBEDDING_DIMENSION=768
+
+# Local LLM (Ollama) Configuration (for contextual embeddings, summaries)
+# LLM_MODEL_URL=http://localhost:11434/api/generate
+# LLM_MODEL_NAME=phi3
 
 # RAG Strategies (set to "true" or "false", default to "false")
 USE_CONTEXTUAL_EMBEDDINGS=false
-USE_HYBRID_SEARCH=false
+USE_HYBRID_SEARCH=false # Note: Hybrid search is not yet implemented for Qdrant
 USE_AGENTIC_RAG=false
 USE_RERANKING=false
 USE_KNOWLEDGE_GRAPH=false
-
-# Supabase Configuration
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_SERVICE_KEY=your_supabase_service_key
 
 # Neo4j Configuration (required for knowledge graph functionality)
 NEO4J_URI=bolt://localhost:7687
