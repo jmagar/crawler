@@ -8,6 +8,8 @@ import os
 import sys
 import asyncio
 import argparse
+import signal
+import multiprocessing
 from dotenv import load_dotenv
 
 # Add the project root to the Python path
@@ -28,12 +30,29 @@ def main():
     
     args = parser.parse_args()
     
+    # Setup signal handlers for graceful shutdown
+    def signal_handler(signum, frame):
+        print(f"\n🛑 Received signal {signum}, shutting down gracefully...")
+        sys.exit(0)
+    
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    
     # Ensure tools are imported and registered before starting the server
     # The import statements at the top ensure decorators are executed
     
-    mcp.run(transport="sse", host=args.host, port=args.port, path="/mcp/")
+    try:
+        mcp.run(transport="sse", host=args.host, port=args.port, path="/mcp/")
+    except KeyboardInterrupt:
+        print("\n🛑 Keyboard interrupt received, shutting down...")
+    except Exception as e:
+        print(f"\n❌ Server error: {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
+    # Set multiprocessing start method to avoid CUDA fork issues
+    multiprocessing.set_start_method('spawn', force=True)
+    
     # Ensure the knowledge_graphs directory is in the path for conditional imports
     knowledge_graphs_path = os.path.join(project_root, 'knowledge_graphs')
     sys.path.append(knowledge_graphs_path)

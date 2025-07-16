@@ -26,6 +26,9 @@ DOCUMENTS_COLLECTION = "documents"
 CODE_EXAMPLES_COLLECTION = "code_examples"
 SOURCES_COLLECTION = "sources"
 
+# --- Default Limits ---
+DEFAULT_SOURCES_LIMIT = int(os.getenv("DEFAULT_SOURCES_LIMIT", 200))
+
 def get_qdrant_client() -> QdrantClient:
     """
     Get a Qdrant client with the URL and key from environment variables.

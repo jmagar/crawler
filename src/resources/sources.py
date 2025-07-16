@@ -12,7 +12,8 @@ from qdrant_client import models
 
 from fastmcp import FastMCP, Context
 
-from src.utils.qdrant_utils import DOCUMENTS_COLLECTION, SOURCES_COLLECTION
+from src.utils.qdrant_utils import DOCUMENTS_COLLECTION, SOURCES_COLLECTION, DEFAULT_SOURCES_LIMIT
+from src.utils.fastmcp_utils import get_query_parameters, get_pagination_params
 
 logger = logging.getLogger(__name__)
 
@@ -29,16 +30,29 @@ def register_source_resources(mcp: FastMCP):
         - overview: All sources with metadata
         - urls: All crawled URLs with filtering
         - stats: Content statistics
+        
+        Query Parameters:
+        - limit: Number of results to return (default: varies by endpoint)
+        - source_filter: Filter by source domain (e.g., github.com)
+        - offset: Pagination offset (default: 0)
         """
         try:
             qdrant_client: QdrantClient = context.lifespan_context.qdrant_client
             
+            # Parse query parameters from the HTTP request
+            query_params = get_query_parameters()
+            
             if path == "overview":
-                return await handle_sources_overview(qdrant_client)
+                limit = query_params.get("limit", DEFAULT_SOURCES_LIMIT)
+                return await handle_sources_overview(qdrant_client, limit=limit)
             elif path == "urls":
-                return await handle_all_urls(qdrant_client)
+                limit = query_params.get("limit", 100)
+                source_filter = query_params.get("source_filter")
+                offset = query_params.get("offset", 0)
+                return await handle_all_urls(qdrant_client, limit=limit, source_filter=source_filter, offset=offset)
             elif path == "stats":
-                return await handle_source_statistics(qdrant_client)
+                source_filter = query_params.get("source_filter")
+                return await handle_source_statistics(qdrant_client, source_filter=source_filter)
             else:
                 return json.dumps({"error": "Unknown resource path"}, indent=2)
                 
@@ -49,33 +63,50 @@ def register_source_resources(mcp: FastMCP):
     logger.info("✅ Source resources registered: sources://overview, sources://urls, sources://stats")
 
 
-async def handle_sources_overview(qdrant_client: QdrantClient) -> str:
+async def handle_sources_overview(qdrant_client: QdrantClient, limit: int = DEFAULT_SOURCES_LIMIT) -> str:
     """
     Provides an overview of all crawled sources with metadata.
+    
+    Args:
+        qdrant_client: The Qdrant client instance
+        limit: Maximum number of sources to fetch per batch (default from config)
     """
     try:
-        # Get all sources from the sources collection
-        scroll_result = qdrant_client.scroll(
-            collection_name=SOURCES_COLLECTION,
-            with_payload=True,
-            limit=200
-        )
-        
         sources = []
         total_sources = 0
         total_words = 0
+        next_page_offset = None
         
-        for point in scroll_result[0]:
-            source_data = point.payload
-            sources.append({
-                "source_id": source_data.get("source_id"),
-                "summary": source_data.get("summary", "No summary available"),
-                "total_words": source_data.get("total_words", 0),
-                "updated_at": source_data.get("updated_at"),
-                "domain": source_data.get("source_id", "").split("/")[0] if source_data.get("source_id") else "unknown"
-            })
-            total_sources += 1
-            total_words += source_data.get("total_words", 0)
+        # Use pagination to handle large datasets efficiently
+        while True:
+            scroll_result = qdrant_client.scroll(
+                collection_name=SOURCES_COLLECTION,
+                with_payload=True,
+                limit=limit,
+                offset=next_page_offset
+            )
+            
+            # Extract points and next offset
+            points, next_page_offset = scroll_result
+            
+            if not points:
+                break
+                
+            for point in points:
+                source_data = point.payload
+                sources.append({
+                    "source_id": source_data.get("source_id"),
+                    "summary": source_data.get("summary", "No summary available"),
+                    "total_words": source_data.get("total_words", 0),
+                    "updated_at": source_data.get("updated_at"),
+                    "domain": source_data.get("source_id", "").split("/")[0] if source_data.get("source_id") else "unknown"
+                })
+                total_sources += 1
+                total_words += source_data.get("total_words", 0)
+            
+            # If no next page offset, we've retrieved all sources
+            if next_page_offset is None:
+                break
         
         # Sort sources by total words (most content first)
         sources.sort(key=lambda x: x["total_words"], reverse=True)
@@ -100,15 +131,17 @@ async def handle_sources_overview(qdrant_client: QdrantClient) -> str:
         return json.dumps(error_data, indent=2)
 
 
-async def handle_all_urls(qdrant_client: QdrantClient) -> str:
+async def handle_all_urls(qdrant_client: QdrantClient, limit: int = 100, source_filter: str = None, offset: int = 0) -> str:
     """
     Provides a comprehensive list of all crawled URLs across all sources.
+    
+    Args:
+        qdrant_client: The Qdrant client instance
+        limit: Maximum number of URLs to return (default: 100)
+        source_filter: Filter by source domain (e.g., 'github.com')
+        offset: Pagination offset (default: 0)
     """
     try:
-        # Default values for now - TODO: Add query parameter support
-        limit = 100
-        source_filter = None
-        offset = 0
         
         # Build filter conditions
         filter_conditions = []
@@ -176,13 +209,15 @@ async def handle_all_urls(qdrant_client: QdrantClient) -> str:
         return json.dumps(error_data, indent=2)
 
 
-async def handle_source_statistics(qdrant_client: QdrantClient) -> str:
+async def handle_source_statistics(qdrant_client: QdrantClient, source_filter: str = None) -> str:
     """
     Provides detailed statistics about crawled content.
+    
+    Args:
+        qdrant_client: The Qdrant client instance
+        source_filter: Filter by source domain (e.g., 'github.com')
     """
     try:
-        # Default value for now - TODO: Add query parameter support
-        source_filter = None
         
         # Get document statistics
         filter_conditions = []

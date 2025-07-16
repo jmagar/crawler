@@ -66,7 +66,7 @@ def get_enhanced_crawler_config(
     content_filter = None
     
     # Configure content filtering based on type
-    if use_content_filtering and os.getenv("USE_CONTENT_FILTERING", "true").lower() == "true":
+    if use_content_filtering and os.getenv("USE_CONTENT_FILTERING", "false").lower() == "true":
         try:
             if filter_type == "bm25":
                 content_filter = BM25ContentFilter(
@@ -114,8 +114,17 @@ def get_enhanced_crawler_config(
         options=markdown_options
     )
     
+    # Configure cache mode based on environment variable
+    cache_mode_env = os.getenv("CRAWL4AI_CACHE_MODE", "ENABLED").upper()
+    if cache_mode_env == "DISABLED":
+        cache_mode = CacheMode.DISABLED
+    elif cache_mode_env == "BYPASS":
+        cache_mode = CacheMode.BYPASS
+    else:
+        cache_mode = CacheMode.ENABLED
+    
     config = CrawlerRunConfig(
-        cache_mode=CacheMode.BYPASS,
+        cache_mode=cache_mode,
         stream=False,
         markdown_generator=markdown_generator,
     )

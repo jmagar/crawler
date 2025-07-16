@@ -23,7 +23,7 @@ async def add_documents_to_qdrant(
     contents: List[str], 
     metadatas: List[Dict[str, Any]],
     url_to_full_document: Dict[str, str],
-    batch_size: int = 10  # Reduced from 50 to prevent 413 errors
+    batch_size: int = 100  # Increased for better performance
 ):
     """
     Add documents to the Qdrant collection in batches.
@@ -69,7 +69,7 @@ async def add_documents_to_qdrant(
         else:
             texts_to_embed = batch_contents
 
-        batch_embeddings = await create_embeddings_batch(texts_to_embed, max_batch_size=5)
+        batch_embeddings = await create_embeddings_batch(texts_to_embed, max_batch_size=32)
         
         points = []
         for j in range(len(batch_contents)):
@@ -219,7 +219,7 @@ async def add_code_examples_to_qdrant(
     code_examples: List[str],
     summaries: List[str],
     metadatas: List[Dict[str, Any]],
-    batch_size: int = 10  # Reduced from 50 to prevent 413 errors
+    batch_size: int = 100  # Increased for better performance
 ):
     """
     Add code examples to the Qdrant code_examples collection.
@@ -271,7 +271,7 @@ async def add_code_examples_to_qdrant(
         if points:
             client.upsert(collection_name=CODE_EXAMPLES_COLLECTION, points=points, wait=True)
 
-async def update_source_info(client: QdrantClient, source_id: str, summary: str, word_count: int):
+async def update_source_info(client: QdrantClient, source_id: str, summary: str, word_count: int, crawl_time: float = None):
     """
     Update or insert source information in the Qdrant sources collection.
     """
@@ -293,7 +293,8 @@ async def update_source_info(client: QdrantClient, source_id: str, summary: str,
                         "source_id": source_id,
                         "summary": summary,
                         "total_words": word_count,
-                        "updated_at": time.time()
+                        "updated_at": time.time(),
+                        "crawl_time_seconds": crawl_time
                     }
                 )
             ],

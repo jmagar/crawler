@@ -12,7 +12,7 @@ from .embedding_utils import (
     call_llm,
     generate_contextual_embedding,
     process_chunk_with_context,
-    close_http_client
+    close_http_client,
 )
 
 # Import document utilities
@@ -25,6 +25,12 @@ from .document_utils import (
     update_source_info,
     extract_source_summary,
     search_code_examples
+)
+
+# Import FastMCP utilities
+from .fastmcp_utils import (
+    get_query_parameters,
+    get_pagination_params
 )
 
 __all__ = [
@@ -43,5 +49,7 @@ __all__ = [
     "add_code_examples_to_qdrant",
     "update_source_info",
     "extract_source_summary",
-    "search_code_examples"
+    "search_code_examples",
+    "get_query_parameters",
+    "get_pagination_params"
 ]

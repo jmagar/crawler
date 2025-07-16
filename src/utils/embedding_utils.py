@@ -21,6 +21,7 @@ CONNECTION_POOL_SIZE = int(os.getenv("EMBEDDING_CONNECTION_POOL", "32"))
 # Global client and semaphore for connection pooling
 _http_client = None
 _semaphore = None
+_semaphore_lock = asyncio.Lock()
 
 async def _get_http_client() -> httpx.AsyncClient:
     """Get or create the shared HTTP client with connection pooling."""
@@ -42,11 +43,24 @@ async def _get_semaphore() -> asyncio.Semaphore:
     """Get or create the semaphore for concurrent request limiting."""
     global _semaphore
     if _semaphore is None:
-        _semaphore = asyncio.Semaphore(MAX_CONCURRENT_BATCHES)
+        async with _semaphore_lock:
+            # Double-check after acquiring lock
+            if _semaphore is None:
+                _semaphore = asyncio.Semaphore(MAX_CONCURRENT_BATCHES)
     return _semaphore
 
 def _estimate_tokens(text: str) -> int:
-    """Rough token estimation: ~4 chars per token for most models."""
+    """
+    Rough token estimation: ~4 chars per token for most models.
+    
+    This estimation works best for English text and may be less accurate for:
+    - Code (which tends to have more tokens per character due to symbols)
+    - Non-English languages (especially languages with different character densities)
+    - Special characters and Unicode symbols
+    - Mathematical notation or technical content
+    
+    Use this for batch sizing heuristics, not precise token counting.
+    """
     return len(text) // 4
 
 async def _send_batch_request(client: httpx.AsyncClient, batch_texts: List[str]) -> List[List[float]]:
@@ -180,10 +194,11 @@ async def create_embedding(text: str) -> List[float]:
 
 async def close_http_client():
     """Close the shared HTTP client to clean up connections."""
-    global _http_client
+    global _http_client, _semaphore
     if _http_client is not None:
         await _http_client.aclose()
         _http_client = None
+    _semaphore = None
 
 async def call_llm(prompt: str, model_name: str) -> str:
     """

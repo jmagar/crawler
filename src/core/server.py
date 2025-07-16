@@ -130,9 +130,8 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
             except Exception as e:
                 logger.error(f"Failed to initialize Neo4j components: {format_neo4j_error(e)}")
 
-        # Initialize process pool with spawn method to avoid CUDA fork issues
+        # Initialize process pool
         logger.info("⚡ Initializing process pool...")
-        multiprocessing.set_start_method('spawn', force=True)
         process_pool = concurrent.futures.ProcessPoolExecutor()
         logger.info("✓ Process pool initialized")
         
@@ -190,8 +189,10 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
         if crawler:
             try:
                 logger.info("📡 Closing web crawler...")
-                await crawler.__aexit__(None, None, None)
+                await asyncio.wait_for(crawler.__aexit__(None, None, None), timeout=5.0)
                 logger.info("✓ Web crawler closed")
+            except asyncio.TimeoutError:
+                logger.warning("⚠️ Web crawler close timeout, forcing shutdown")
             except Exception as e:
                 logger.error(f"Error closing web crawler: {e}")
 
@@ -206,7 +207,11 @@ mcp = FastMCP(
 async def health_check(request):
     """Health check endpoint."""
     from starlette.responses import JSONResponse
-    return JSONResponse({"status": "ok"})
+    try:
+        return JSONResponse({"status": "ok"})
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
 
 mcp._additional_http_routes.append(Route("/health", health_check))
 

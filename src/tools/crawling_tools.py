@@ -4,6 +4,7 @@ Web crawling and RAG tools for the MCP server.
 import os
 import json
 import asyncio
+import time
 from typing import List, Dict, Any
 from urllib.parse import urlparse
 
@@ -78,8 +79,9 @@ async def scrape(ctx: Context, url: str) -> str:
             
             url_to_full_document = {url: result.markdown}
             
+            elapsed_time = time.time() - start_time
             source_summary = await extract_source_summary(source_id, result.markdown[:5000])
-            await update_source_info(qdrant_client, source_id, source_summary, total_word_count)
+            await update_source_info(qdrant_client, source_id, source_summary, total_word_count, elapsed_time)
             
             await add_documents_to_qdrant(qdrant_client, urls, chunk_numbers, contents, metadatas, url_to_full_document)
             
@@ -118,6 +120,7 @@ async def crawl(ctx: Context, url: str, max_depth: int = 3, max_concurrent: int 
     Intelligently crawl a URL and store content in Qdrant.
     Enhanced with interruption handling and recovery.
     """
+    start_time = time.time()
     crawl_results = []
     try:
         # Validate context and get components
@@ -142,13 +145,13 @@ async def crawl(ctx: Context, url: str, max_depth: int = 3, max_concurrent: int 
                 sitemap_urls = parse_sitemap(url, max_urls=50)  # Limit sitemap URLs
                 if sitemap_urls:
                     await ctx.report_progress(progress=15, total=100, message=f"Crawling {len(sitemap_urls)} URLs from sitemap...")
-                    crawl_results = await crawl_batch(crawler, sitemap_urls, max_concurrent=min(max_concurrent, 5))
+                    crawl_results = await crawl_batch(crawler, sitemap_urls, max_concurrent=min(max_concurrent, 50))
             else:
                 await ctx.report_progress(progress=10, total=100, message="Starting recursive crawl...")
                 crawl_results = await crawl_recursive_internal_links(
                     crawler, [url], 
-                    max_depth=min(max_depth, 2),  # Limit depth to prevent runaway crawls
-                    max_concurrent=min(max_concurrent, 5)
+                    max_depth=min(max_depth, 3),  # Increased depth limit
+                    max_concurrent=min(max_concurrent, 50)
                 )
         except Exception as crawl_error:
             print(f"Crawl error: {crawl_error}")
@@ -211,10 +214,11 @@ async def crawl(ctx: Context, url: str, max_depth: int = 3, max_concurrent: int 
         await ctx.report_progress(progress=50, total=100, message="Updating source info...")
 
         # Update source information with error handling
+        elapsed_time = time.time() - start_time
         for source_id, content in source_content_map.items():
             try:
                 summary = await extract_source_summary(source_id, content)
-                await update_source_info(qdrant_client, source_id, summary, source_word_counts.get(source_id, 0))
+                await update_source_info(qdrant_client, source_id, summary, source_word_counts.get(source_id, 0), elapsed_time)
             except Exception as source_error:
                 print(f"Error updating source {source_id}: {source_error}")
 
@@ -243,7 +247,7 @@ async def crawl(ctx: Context, url: str, max_depth: int = 3, max_concurrent: int 
                     code_urls, code_chunk_numbers, code_examples_list, code_summaries, code_metadatas = [], [], [], [], []
                     
                     # Limit code examples to prevent overload
-                    limited_code_blocks = all_code_blocks_data[:50]  # Max 50 code examples
+                    limited_code_blocks = all_code_blocks_data[:100]  # Max 100 code examples
                     
                     summary_tasks = [generate_code_example_summary(block['code'], block['context_before'], block['context_after']) for block in limited_code_blocks]
                     summaries = await asyncio.gather(*summary_tasks, return_exceptions=True)
@@ -267,22 +271,26 @@ async def crawl(ctx: Context, url: str, max_depth: int = 3, max_concurrent: int 
             except Exception as code_error:
                 print(f"Error processing code examples: {code_error}")
 
-        await ctx.report_progress(progress=100, total=100, message="Crawl complete.")
+        elapsed_time = time.time() - start_time
+        await ctx.report_progress(progress=100, total=100, message=f"Crawl complete in {elapsed_time:.2f}s.")
 
         return json.dumps({
             "success": True,
             "url": url,
             "pages_crawled": len(crawl_results),
             "chunks_stored": len(all_contents),
-            "code_examples_stored": code_examples_stored
+            "code_examples_stored": code_examples_stored,
+            "elapsed_time_seconds": round(elapsed_time, 2)
         }, indent=2)
         
     except asyncio.CancelledError:
         # Handle graceful cancellation
+        elapsed_time = time.time() - start_time
         return json.dumps({
             "success": False, 
             "url": url, 
             "error": "Crawl was cancelled",
+            "elapsed_time_seconds": round(elapsed_time, 2),
             "partial_results": {
                 "pages_crawled": len(crawl_results),
                 "chunks_stored": 0
@@ -291,10 +299,12 @@ async def crawl(ctx: Context, url: str, max_depth: int = 3, max_concurrent: int 
         
     except Exception as e:
         print(f"Unexpected error in smart_crawl_url: {e}")
+        elapsed_time = time.time() - start_time
         return json.dumps({
             "success": False, 
             "url": url, 
             "error": str(e),
+            "elapsed_time_seconds": round(elapsed_time, 2),
             "partial_results": {
                 "pages_crawled": len(crawl_results),
                 "chunks_stored": 0
