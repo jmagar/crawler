@@ -12,14 +12,97 @@ EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", 768))
 LLM_MODEL_URL = os.getenv("LLM_MODEL_URL") # For Ollama, e.g., http://localhost:11434/api/generate
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "phi3") # e.g., phi3
 
-async def create_embeddings_batch(texts: List[str], max_batch_size: int = 5) -> List[List[float]]:
+# Performance configuration matching TEI server settings
+MAX_BATCH_SIZE = int(os.getenv("EMBEDDING_MAX_BATCH_SIZE", "64"))  # Match TEI max-batch-requests
+MAX_CONCURRENT_BATCHES = int(os.getenv("EMBEDDING_MAX_CONCURRENT", "64"))  # Half of TEI max-concurrent-requests
+MAX_TOKENS_PER_BATCH = int(os.getenv("EMBEDDING_MAX_TOKENS", "28000"))  # Below TEI max-batch-tokens for safety
+CONNECTION_POOL_SIZE = int(os.getenv("EMBEDDING_CONNECTION_POOL", "32"))
+
+# Global client and semaphore for connection pooling
+_http_client = None
+_semaphore = None
+
+async def _get_http_client() -> httpx.AsyncClient:
+    """Get or create the shared HTTP client with connection pooling."""
+    global _http_client
+    if _http_client is None:
+        limits = httpx.Limits(
+            max_keepalive_connections=CONNECTION_POOL_SIZE,
+            max_connections=CONNECTION_POOL_SIZE + 10,
+            keepalive_expiry=30.0
+        )
+        _http_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0),
+            limits=limits,
+            http2=True
+        )
+    return _http_client
+
+async def _get_semaphore() -> asyncio.Semaphore:
+    """Get or create the semaphore for concurrent request limiting."""
+    global _semaphore
+    if _semaphore is None:
+        _semaphore = asyncio.Semaphore(MAX_CONCURRENT_BATCHES)
+    return _semaphore
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimation: ~4 chars per token for most models."""
+    return len(text) // 4
+
+async def _send_batch_request(client: httpx.AsyncClient, batch_texts: List[str]) -> List[List[float]]:
+    """Send a single batch request with proper error handling."""
+    max_retries = 3
+    retry_delay = 1.0
+    
+    for attempt in range(max_retries):
+        try:
+            response = await client.post(
+                EMBEDDING_MODEL_URL, 
+                json={"inputs": batch_texts, "truncate": True}
+            )
+            response.raise_for_status()
+            return response.json()
+            
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 413:  # Payload Too Large
+                if len(batch_texts) == 1:
+                    # Single text too large, truncate
+                    truncated_text = batch_texts[0][:10000]
+                    response = await client.post(
+                        EMBEDDING_MODEL_URL, 
+                        json={"inputs": [truncated_text], "truncate": True}
+                    )
+                    response.raise_for_status()
+                    return response.json()
+                else:
+                    # Split batch and retry
+                    mid = len(batch_texts) // 2
+                    batch1 = await _send_batch_request(client, batch_texts[:mid])
+                    batch2 = await _send_batch_request(client, batch_texts[mid:])
+                    return batch1 + batch2
+            else:
+                raise e
+                
+        except httpx.RequestError as e:
+            if attempt < max_retries - 1:
+                print(f"Error in batch request (attempt {attempt + 1}/{max_retries}): {e}")
+                await asyncio.sleep(retry_delay)
+                retry_delay *= 2
+            else:
+                print(f"Failed batch request after {max_retries} attempts: {e}")
+                # Return zero embeddings as fallback
+                return [[0.0] * EMBEDDING_DIMENSION for _ in batch_texts]
+    
+    return [[0.0] * EMBEDDING_DIMENSION for _ in batch_texts]
+
+async def create_embeddings_batch(texts: List[str], max_batch_size: int = None) -> List[List[float]]:
     """
     Create embeddings for multiple texts using a self-hosted TEI server.
-    Splits large batches to prevent 413 Payload Too Large errors.
+    Optimized for high throughput with connection pooling and concurrent processing.
     
     Args:
         texts: List of texts to create embeddings for
-        max_batch_size: Maximum number of texts to send in one request
+        max_batch_size: Maximum number of texts to send in one request (defaults to configured MAX_BATCH_SIZE)
         
     Returns:
         List of embeddings (each embedding is a list of floats)
@@ -27,65 +110,54 @@ async def create_embeddings_batch(texts: List[str], max_batch_size: int = 5) -> 
     if not texts:
         return []
     
-    all_embeddings = []
+    if max_batch_size is None:
+        max_batch_size = MAX_BATCH_SIZE
     
-    # Process in smaller batches to prevent payload size issues
-    for i in range(0, len(texts), max_batch_size):
-        batch_texts = texts[i:i + max_batch_size]
+    client = await _get_http_client()
+    semaphore = await _get_semaphore()
+    
+    # Smart batching based on token estimation
+    batches = []
+    current_batch = []
+    current_tokens = 0
+    
+    for text in texts:
+        estimated_tokens = _estimate_tokens(text)
         
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            max_retries = 3
-            retry_delay = 1.0
-            
-            for attempt in range(max_retries):
-                try:
-                    # Calculate approximate payload size
-                    total_chars = sum(len(text) for text in batch_texts)
-                    if total_chars > 50000:  # If batch too large, split further
-                        # Recursively split the batch
-                        mid = len(batch_texts) // 2
-                        batch1 = await create_embeddings_batch(batch_texts[:mid], max_batch_size)
-                        batch2 = await create_embeddings_batch(batch_texts[mid:], max_batch_size)
-                        all_embeddings.extend(batch1 + batch2)
-                        break
-                    
-                    response = await client.post(EMBEDDING_MODEL_URL, json={"inputs": batch_texts, "truncate": True})
-                    response.raise_for_status()
-                    batch_embeddings = response.json()
-                    all_embeddings.extend(batch_embeddings)
-                    break
-                    
-                except httpx.HTTPStatusError as e:
-                    if e.response.status_code == 413:  # Payload Too Large
-                        print(f"Payload too large for batch of {len(batch_texts)} texts, splitting...")
-                        # Split batch in half and retry
-                        if len(batch_texts) == 1:
-                            # Single text is too large, truncate it
-                            truncated_text = batch_texts[0][:10000]  # Limit to 10k chars
-                            response = await client.post(EMBEDDING_MODEL_URL, json={"inputs": [truncated_text], "truncate": True})
-                            response.raise_for_status()
-                            batch_embeddings = response.json()
-                            all_embeddings.extend(batch_embeddings)
-                            break
-                        else:
-                            mid = len(batch_texts) // 2
-                            batch1 = await create_embeddings_batch(batch_texts[:mid], max_batch_size)
-                            batch2 = await create_embeddings_batch(batch_texts[mid:], max_batch_size)
-                            all_embeddings.extend(batch1 + batch2)
-                            break
-                    else:
-                        raise e
-                        
-                except httpx.RequestError as e:
-                    if attempt < max_retries - 1:
-                        print(f"Error creating batch embeddings (attempt {attempt + 1}/{max_retries}): {e}")
-                        await asyncio.sleep(retry_delay)
-                        retry_delay *= 2
-                    else:
-                        print(f"Failed to create batch embeddings after {max_retries} attempts: {e}")
-                        # Fallback to creating zero embeddings for this batch
-                        all_embeddings.extend([[0.0] * EMBEDDING_DIMENSION for _ in batch_texts])
-                        break
+        # Check if adding this text would exceed limits
+        if (current_batch and 
+            (len(current_batch) >= max_batch_size or 
+             current_tokens + estimated_tokens > MAX_TOKENS_PER_BATCH)):
+            batches.append(current_batch)
+            current_batch = [text]
+            current_tokens = estimated_tokens
+        else:
+            current_batch.append(text)
+            current_tokens += estimated_tokens
+    
+    if current_batch:
+        batches.append(current_batch)
+    
+    # Process batches concurrently with semaphore limiting
+    async def process_batch(batch_texts: List[str]) -> List[List[float]]:
+        async with semaphore:
+            return await _send_batch_request(client, batch_texts)
+    
+    # Execute all batches concurrently
+    batch_results = await asyncio.gather(
+        *[process_batch(batch) for batch in batches],
+        return_exceptions=True
+    )
+    
+    # Flatten results and handle any exceptions
+    all_embeddings = []
+    for i, result in enumerate(batch_results):
+        if isinstance(result, Exception):
+            print(f"Batch {i} failed with exception: {result}")
+            # Fallback to zero embeddings for failed batch
+            all_embeddings.extend([[0.0] * EMBEDDING_DIMENSION for _ in batches[i]])
+        else:
+            all_embeddings.extend(result)
     
     return all_embeddings
 
@@ -105,6 +177,13 @@ async def create_embedding(text: str) -> List[float]:
     except Exception as e:
         print(f"Error creating embedding: {e}")
         return [0.0] * EMBEDDING_DIMENSION
+
+async def close_http_client():
+    """Close the shared HTTP client to clean up connections."""
+    global _http_client
+    if _http_client is not None:
+        await _http_client.aclose()
+        _http_client = None
 
 async def call_llm(prompt: str, model_name: str) -> str:
     """

@@ -11,7 +11,8 @@ from .embedding_utils import (
     create_embedding,
     call_llm,
     generate_contextual_embedding,
-    process_chunk_with_context
+    process_chunk_with_context,
+    close_http_client
 )
 
 # Import document utilities
@@ -34,6 +35,7 @@ __all__ = [
     "call_llm",
     "generate_contextual_embedding",
     "process_chunk_with_context",
+    "close_http_client",
     "add_documents_to_qdrant",
     "search_documents",
     "extract_code_blocks",

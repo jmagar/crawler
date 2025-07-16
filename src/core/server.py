@@ -5,6 +5,7 @@ Hot reload test - this comment was added to test the hot reload functionality!
 """
 import os
 import logging
+import multiprocessing
 import concurrent.futures
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
@@ -21,6 +22,7 @@ from crawl4ai import AsyncWebCrawler, BrowserConfig
 
 from src.core.validation import validate_neo4j_connection, format_neo4j_error
 from src.utils import get_qdrant_client, setup_qdrant_collections
+from src.resources import register_source_resources
 
 
 # Conditional import for knowledge graph components
@@ -128,8 +130,9 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
             except Exception as e:
                 logger.error(f"Failed to initialize Neo4j components: {format_neo4j_error(e)}")
 
-        # Initialize process pool
+        # Initialize process pool with spawn method to avoid CUDA fork issues
         logger.info("⚡ Initializing process pool...")
+        multiprocessing.set_start_method('spawn', force=True)
         process_pool = concurrent.futures.ProcessPoolExecutor()
         logger.info("✓ Process pool initialized")
         
@@ -202,7 +205,12 @@ mcp = FastMCP(
 
 async def health_check(request):
     """Health check endpoint."""
-    return {"status": "ok"}
+    from starlette.responses import JSONResponse
+    return JSONResponse({"status": "ok"})
 
 mcp._additional_http_routes.append(Route("/health", health_check))
+
+# Register MCP resources
+register_source_resources(mcp)
+logger.info("📋 MCP resources registered successfully")
 
