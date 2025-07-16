@@ -1,5 +1,7 @@
 """
 Core server setup, context, and lifecycle management.
+Hot reload test - this comment was added to test the hot reload functionality!
+🔥 HOT RELOAD TEST #2 - Let's see if this triggers a restart!
 """
 import os
 import logging

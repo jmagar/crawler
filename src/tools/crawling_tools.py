@@ -39,7 +39,7 @@ from src.utils import (
 )
 
 @mcp.tool()
-async def crawl_single_page(ctx: Context, url: str) -> str:
+async def scrape(ctx: Context, url: str) -> str:
     """
     Crawl a single web page and store its content in Qdrant.
     """
@@ -113,7 +113,7 @@ async def crawl_single_page(ctx: Context, url: str) -> str:
         return json.dumps({"success": False, "url": url, "error": str(e)}, indent=2)
 
 @mcp.tool()
-async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concurrent: int = 10, chunk_size: int = 5000) -> str:
+async def crawl(ctx: Context, url: str, max_depth: int = 3, max_concurrent: int = 10, chunk_size: int = 5000) -> str:
     """
     Intelligently crawl a URL and store content in Qdrant.
     Enhanced with interruption handling and recovery.
@@ -302,7 +302,7 @@ async def smart_crawl_url(ctx: Context, url: str, max_depth: int = 3, max_concur
         }, indent=2)
 
 @mcp.tool()
-async def get_available_sources(ctx: Context) -> str:
+async def available_sources(ctx: Context) -> str:
     """
     Get all available sources from the Qdrant sources collection.
     """
@@ -319,7 +319,7 @@ async def get_available_sources(ctx: Context) -> str:
         return json.dumps({"success": False, "error": str(e)}, indent=2)
 
 @mcp.tool()
-async def perform_rag_query(ctx: Context, query: str, source: str = None, match_count: int = 5) -> str:
+async def rag_query(ctx: Context, query: str, source: str = None, match_count: int = 5) -> str:
     """
     Perform a RAG query on the stored content in Qdrant.
     """
@@ -377,43 +377,3 @@ async def search_code_examples(ctx: Context, query: str, source_id: str = None, 
     except Exception as e:
         return json.dumps({"success": False, "query": query, "error": str(e)}, indent=2)
 
-@mcp.tool()
-async def test_chunking_strategies(ctx: Context, url: str, strategies: List[str] = None) -> str:
-    """
-    Test different chunking strategies on a single page to compare results.
-    """
-    if strategies is None:
-        strategies = ["smart", "regex", "sentence", "fixed_word", "sliding"]
-    
-    try:
-        crawler = ctx.request_context.lifespan_context.crawler
-        
-        # Crawl the page once
-        run_config = get_enhanced_crawler_config()
-        result = await crawler.arun(url=url, config=run_config)
-        
-        if not result.success or not result.markdown:
-            return json.dumps({"success": False, "error": "Failed to crawl page"}, indent=2)
-        
-        results = {}
-        for strategy in strategies:
-            try:
-                chunks = smart_chunk_markdown(result.markdown, chunk_size=5000, strategy=strategy)
-                results[strategy] = {
-                    "chunk_count": len(chunks),
-                    "avg_chunk_size": sum(len(chunk) for chunk in chunks) // len(chunks) if chunks else 0,
-                    "total_chars": sum(len(chunk) for chunk in chunks),
-                    "sample_chunk": chunks[0][:200] + "..." if chunks else ""
-                }
-            except Exception as e:
-                results[strategy] = {"error": str(e)}
-        
-        return json.dumps({
-            "success": True,
-            "url": url,
-            "original_markdown_length": len(result.markdown),
-            "strategy_results": results
-        }, indent=2)
-        
-    except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}, indent=2)

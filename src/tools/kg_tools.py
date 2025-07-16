@@ -15,32 +15,9 @@ if os.getenv("USE_KNOWLEDGE_GRAPH", "false") == "true":
     from ai_script_analyzer import AIScriptAnalyzer
     from hallucination_reporter import HallucinationReporter
 
-@mcp.tool()
-async def parse_github_repository(ctx: Context, repo_url: str) -> str:
-    """
-    Parse a GitHub repository into the Neo4j knowledge graph.
-    """
-    if os.getenv("USE_KNOWLEDGE_GRAPH", "false") != "true":
-        return json.dumps({"success": False, "error": "Knowledge graph functionality is disabled."})
-
-    repo_extractor = ctx.request_context.lifespan_context.repo_extractor
-    if not repo_extractor:
-        return json.dumps({"success": False, "error": "Knowledge graph extractor not available."})
-
-    validation = validate_github_url(repo_url)
-    if not validation["valid"]:
-        return json.dumps({"success": False, "error": validation["error"]})
-
-    try:
-        repo_name = validation["repo_name"]
-        await repo_extractor.analyze_repository(repo_url)
-        # ... (Statistics query from original file)
-        return json.dumps({"success": True, "message": f"Successfully parsed {repo_name}"})
-    except Exception as e:
-        return json.dumps({"success": False, "error": str(e)})
 
 @mcp.tool()
-async def check_ai_script_hallucinations(ctx: Context, script_path: str) -> str:
+async def you_trippin(ctx: Context, script_path: str) -> str:
     """
     Check an AI-generated Python script for hallucinations.
     """
@@ -65,9 +42,32 @@ async def check_ai_script_hallucinations(ctx: Context, script_path: str) -> str:
     except Exception as e:
         return json.dumps({"success": False, "error": str(e)})
 
+@mcp.tool()
+async def crawl_repo(ctx: Context, repo_url: str) -> str:
+    """
+    Parse a GitHub repository into the Neo4j knowledge graph.
+    """
+    if os.getenv("USE_KNOWLEDGE_GRAPH", "false") != "true":
+        return json.dumps({"success": False, "error": "Knowledge graph functionality is disabled."})
+
+    repo_extractor = ctx.request_context.lifespan_context.repo_extractor
+    if not repo_extractor:
+        return json.dumps({"success": False, "error": "Knowledge graph extractor not available."})
+
+    validation = validate_github_url(repo_url)
+    if not validation["valid"]:
+        return json.dumps({"success": False, "error": validation["error"]})
+
+    try:
+        repo_name = validation["repo_name"]
+        await repo_extractor.analyze_repository(repo_url)
+        # ... (Statistics query from original file)
+        return json.dumps({"success": True, "message": f"Successfully parsed {repo_name}"})
+    except Exception as e:
+        return json.dumps({"success": False, "error": str(e)})
 
 @mcp.tool()
-async def query_knowledge_graph(ctx: Context, command: str) -> str:
+async def graph_query(ctx: Context, command: str) -> str:
     """
     Query and explore the Neo4j knowledge graph.
     """
@@ -87,4 +87,5 @@ async def query_knowledge_graph(ctx: Context, command: str) -> str:
             return json.dumps({"success": True, "data": records}, indent=2)
     except Exception as e:
         return json.dumps({"success": False, "error": f"Query failed: {str(e)}"})
+
 

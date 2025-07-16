@@ -7,6 +7,7 @@ from their respective modules.
 import os
 import sys
 import asyncio
+import argparse
 from dotenv import load_dotenv
 
 # Add the project root to the Python path
@@ -21,11 +22,16 @@ from src.tools import crawling_tools, kg_tools
 
 def main():
     """Run the MCP server based on the configured transport."""
+    parser = argparse.ArgumentParser(description="Crawl4AI MCP Server")
+    parser.add_argument('--host', default=os.getenv("HOST", "0.0.0.0"), help='Host to bind to')
+    parser.add_argument('--port', type=int, default=int(os.getenv("PORT", 8051)), help='Port to bind to')
+    
+    args = parser.parse_args()
+    
     # Ensure tools are imported and registered before starting the server
     # The import statements at the top ensure decorators are executed
-    host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", 8051))
-    mcp.run(transport="sse", host=host, port=port, path="/mcp/")
+    
+    mcp.run(transport="sse", host=args.host, port=args.port, path="/mcp/")
 
 if __name__ == "__main__":
     # Ensure the knowledge_graphs directory is in the path for conditional imports
