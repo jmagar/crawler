@@ -2,6 +2,22 @@
 """
 Utility functions for the Crawl4AI MCP server.
 """
+
+# Import hot reload functionality for development
+try:
+    from src.utils.hot_reload import (
+        HotReloadWatcher,
+        create_restart_wrapper, 
+        enable_hot_reload_for_fastmcp
+    )
+    __all__ = [
+        "HotReloadWatcher",
+        "create_restart_wrapper", 
+        "enable_hot_reload_for_fastmcp"
+    ]
+except ImportError:
+    # Hot reload dependencies not available
+    pass
 import os
 import asyncio
 import concurrent.futures
