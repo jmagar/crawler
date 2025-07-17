@@ -1,11 +1,16 @@
 """
 KnowledgeGraphValidator for validating AI-generated scripts against knowledge graph.
 """
-import ast
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Any
 from neo4j import AsyncGraphDatabase
-from src.core.validation import format_neo4j_error
+try:
+    from src.core.validation import format_neo4j_error
+except ImportError:
+    def format_neo4j_error(error: Exception) -> str:
+        return f"Neo4j error: {str(error)}"
+    logger = logging.getLogger(__name__)
+    logger.warning("Failed to import 'format_neo4j_error' from 'src.core.validation'. Using fallback implementation.")
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +46,7 @@ class KnowledgeGraphValidator:
             await self.driver.close()
             logger.info("KnowledgeGraphValidator connection closed")
     
-    async def validate_script(self, analysis_result: Dict[str, Any]) -> Dict[str, Any]:
+    async def validate_script(self, analysis_result: dict[str, Any]) -> dict[str, Any]:
         """
         Validate AI script analysis against knowledge graph.
         
@@ -97,7 +102,7 @@ class KnowledgeGraphValidator:
                 "recommendations": ["Unable to validate script due to technical issues"]
             }
     
-    async def _validate_imports(self, imports: List[str], validation_result: Dict[str, Any]):
+    async def _validate_imports(self, imports: list[str], validation_result: dict[str, Any]):
         """Validate imported modules against known libraries in the graph."""
         if not imports:
             return
@@ -144,7 +149,7 @@ class KnowledgeGraphValidator:
                             "component": import_name
                         })
     
-    async def _validate_functions(self, functions: List[Dict[str, Any]], validation_result: Dict[str, Any]):
+    async def _validate_functions(self, functions: list[dict[str, Any]], validation_result: dict[str, Any]):
         """Validate function definitions against known patterns."""
         if not functions:
             return
@@ -181,7 +186,7 @@ class KnowledgeGraphValidator:
                             "component": func_name
                         })
     
-    async def _validate_external_calls(self, external_calls: List[str], validation_result: Dict[str, Any]):
+    async def _validate_external_calls(self, external_calls: list[str], validation_result: dict[str, Any]):
         """Validate external API calls against known APIs."""
         if not external_calls:
             return
@@ -220,7 +225,7 @@ class KnowledgeGraphValidator:
                         "component": call
                     })
     
-    async def _validate_file_operations(self, file_ops: List[str], validation_result: Dict[str, Any]):
+    async def _validate_file_operations(self, file_ops: list[str], validation_result: dict[str, Any]):
         """Validate file operations against common patterns."""
         if not file_ops:
             return
@@ -258,7 +263,7 @@ class KnowledgeGraphValidator:
         }
         return module_name.split('.')[0] in standard_libs
     
-    def _is_suspicious_function(self, func_name: str, func_args: List[str]) -> bool:
+    def _is_suspicious_function(self, func_name: str, func_args: list[str]) -> bool:
         """Check if function name/signature appears suspicious or hallucinated."""
         # Check for overly complex or nonsensical names
         suspicious_patterns = [
@@ -280,7 +285,7 @@ class KnowledgeGraphValidator:
         
         return False
     
-    def _calculate_confidence_score(self, validation_result: Dict[str, Any]) -> float:
+    def _calculate_confidence_score(self, validation_result: dict[str, Any]) -> float:
         """Calculate confidence score based on validation results."""
         total_components = len(validation_result["validated_components"])
         total_issues = len(validation_result["issues"])

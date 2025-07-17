@@ -2,7 +2,7 @@
 HallucinationReporter for generating comprehensive reports on AI script validation.
 """
 import logging
-from typing import Dict, Any, List
+from typing import Any
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -14,7 +14,7 @@ class HallucinationReporter:
         """Initialize the hallucination reporter."""
         pass
     
-    def generate_comprehensive_report(self, validation_result: Dict[str, Any]) -> Dict[str, Any]:
+    def generate_comprehensive_report(self, validation_result: dict[str, Any]) -> dict[str, Any]:
         """
         Generate a comprehensive report from validation results.
         
@@ -37,7 +37,7 @@ class HallucinationReporter:
         
         return report
     
-    def _generate_summary(self, validation_result: Dict[str, Any]) -> Dict[str, Any]:
+    def _generate_summary(self, validation_result: dict[str, Any]) -> dict[str, Any]:
         """Generate executive summary of the validation."""
         hallucinations_detected = validation_result.get("hallucinations_detected", False)
         confidence_score = validation_result.get("confidence_score", 0.0)
@@ -75,7 +75,7 @@ class HallucinationReporter:
             "validation_ratio": round(total_validated / max(total_validated + total_issues, 1), 2)
         }
     
-    def _analyze_confidence(self, validation_result: Dict[str, Any]) -> Dict[str, Any]:
+    def _analyze_confidence(self, validation_result: dict[str, Any]) -> dict[str, Any]:
         """Provide detailed confidence analysis."""
         confidence_score = validation_result.get("confidence_score", 0.0)
         
@@ -119,7 +119,7 @@ class HallucinationReporter:
             "contributing_factors": factors
         }
     
-    def _categorize_issues(self, validation_result: Dict[str, Any]) -> Dict[str, Any]:
+    def _categorize_issues(self, validation_result: dict[str, Any]) -> dict[str, Any]:
         """Categorize and analyze issues by type and severity."""
         issues = validation_result.get("issues", [])
         
@@ -167,7 +167,7 @@ class HallucinationReporter:
             }
         }
     
-    def _format_validated_components(self, validation_result: Dict[str, Any]) -> Dict[str, Any]:
+    def _format_validated_components(self, validation_result: dict[str, Any]) -> dict[str, Any]:
         """Format validated components for the report."""
         components = validation_result.get("validated_components", [])
         
@@ -192,7 +192,7 @@ class HallucinationReporter:
             "types_validated": list(by_type.keys())
         }
     
-    def _generate_recommendations(self, validation_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _generate_recommendations(self, validation_result: dict[str, Any]) -> list[dict[str, Any]]:
         """Generate actionable recommendations based on validation results."""
         recommendations = []
         
@@ -260,7 +260,7 @@ class HallucinationReporter:
         
         return recommendations
     
-    def _assess_risk(self, validation_result: Dict[str, Any]) -> Dict[str, Any]:
+    def _assess_risk(self, validation_result: dict[str, Any]) -> dict[str, Any]:
         """Assess overall risk level and provide risk analysis."""
         confidence_score = validation_result.get("confidence_score", 0.0)
         issues = validation_result.get("issues", [])
@@ -313,7 +313,7 @@ class HallucinationReporter:
         }
         return recommendations.get(risk_level, "Unknown risk level")
     
-    def _generate_action_items(self, validation_result: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _generate_action_items(self, validation_result: dict[str, Any]) -> list[dict[str, Any]]:
         """Generate specific action items for addressing issues."""
         action_items = []
         issues = validation_result.get("issues", [])
