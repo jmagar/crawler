@@ -6,6 +6,7 @@ Hot reload test - this comment was added to test the hot reload functionality!
 import os
 import logging
 import multiprocessing
+import asyncio
 import concurrent.futures
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
