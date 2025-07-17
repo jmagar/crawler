@@ -1,7 +1,7 @@
 - [x] https://ui.shadcn.com/docs
 - [x] https://tailwindcss.com/docs/installation/using-vite
-- [ ] https://nextjs.org/docs
-- [ ] https://postcss.org/docs/
+- [x] https://nextjs.org/docs
+- [x] https://postcss.org/docs/
 - [ ] https://eslint.org/docs/latest/
 - [ ] https://prettier.io/docs/
 - [ ] https://www.typescriptlang.org/docs/
