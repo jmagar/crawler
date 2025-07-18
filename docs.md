@@ -2,32 +2,32 @@
 - [x] https://tailwindcss.com/docs/installation/using-vite
 - [x] https://nextjs.org/docs
 - [x] https://postcss.org/docs/
-- [ ] https://eslint.org/docs/latest/
-- [ ] https://prettier.io/docs/
-- [ ] https://www.typescriptlang.org/docs/
-- [ ] https://docs.crawl4ai.com/
-- [ ] https://react.dev/reference/react
-- [ ] https://www.python.org/doc/
-- [ ] https://docs.astral.sh/uv/guides/tools/
-- [ ] https://docs.docker.com/
-- [ ] https://zsh.sourceforge.io/Doc/Release/zsh_toc.html
-- [ ] https://www.gnu.org/software/bash/manual/bash.html
-- [ ] https://docs.unraid.net/
-- [ ] https://libvirt.org/docs.html
-- [ ] https://docs.cursor.com/welcome
-- [ ] https://docs.windsurf.com/windsurf/getting-started
-- [ ] https://docs.cline.bot/getting-started/for-new-coders
-- [ ] https://docs.roocode.com/
-- [ ] https://kilocode.ai/docs/
-- [ ] https://openrouter.ai/docs/quickstart
-- [ ] https://docs.anthropic.com/en/home
-- [ ] https://platform.openai.com/docs/overview
-- [ ] https://code.visualstudio.com/docs
-- [ ] https://m3.material.io/get-started
-- [ ] https://vite.dev/guide/
-- [ ] https://go.dev/doc/
-- [ ] https://dart.dev/docs
-- [ ] https://docs.flutter.dev/
+- [x] https://eslint.org/docs/latest/
+- [x] https://prettier.io/docs/
+- [x] https://www.typescriptlang.org/docs/
+- [x] https://docs.crawl4ai.com/
+- [x] https://react.dev/reference/react
+- [x] https://www.python.org/doc/
+- [x] https://docs.astral.sh/uv/guides/tools/
+- [x] https://docs.docker.com/
+- [x] https://zsh.sourceforge.io/Doc/Release/zsh_toc.html
+- [x] https://www.gnu.org/software/bash/manual/bash.html
+- [x] https://docs.unraid.net/
+- [x] https://libvirt.org/docs.html
+- [x] https://docs.cursor.com/welcome
+- [x] https://docs.windsurf.com/windsurf/getting-started
+- [x] https://docs.cline.bot/getting-started/for-new-coders
+- [x] https://docs.roocode.com/
+- [x] https://kilocode.ai/docs/
+- [x] https://openrouter.ai/docs/quickstart
+- [x] https://docs.anthropic.com/en/home
+- [x] https://platform.openai.com/docs/overview
+- [x] https://code.visualstudio.com/docs
+- [x] https://m3.material.io/get-started
+- [x] https://vite.dev/guide/
+- [x] https://go.dev/doc/
+- [x] https://dart.dev/docs
+- [x] https://docs.flutter.dev/
 - [ ] https://turborepo.com/docs
 - [ ] https://docs.pypi.org/
 - [ ] https://docs.npmjs.com/

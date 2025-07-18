@@ -12,6 +12,8 @@ import nltk
 from nltk.tokenize import sent_tokenize, TextTilingTokenizer
 import numpy as np
 
+from .timeout_utils import with_process_timeout, TimeoutConfig
+
 def ensure_nltk_data():
     """Ensure required NLTK data is downloaded."""
     try:
@@ -40,8 +42,9 @@ async def rerank_results(pool: concurrent.futures.ProcessPoolExecutor, model: Cr
     texts = [result.get(content_key, "") for result in results]
     
     try:
-        scores = await loop.run_in_executor(
-            pool, _run_rerank_in_process, model, query, texts
+        scores = await with_process_timeout(
+            loop.run_in_executor(pool, _run_rerank_in_process, model, query, texts),
+            operation_name=f"rerank {len(texts)} results"
         )
         
         for i, result in enumerate(results):

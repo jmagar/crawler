@@ -86,6 +86,7 @@ Environment variables in `.env`:
 ### Core Crawling Tools
 - `scrape` - Crawl and store a single web page
 - `crawl` - Intelligently crawl entire sites (sitemaps, recursive crawling)
+- `crawl_dir` - Crawl local directories and ingest files into the pipeline
 - `available_sources` - List all crawled domains/sources
 - `rag_query` - Semantic search with optional source filtering
 - `search_code_examples` - Find code snippets and implementation examples
@@ -107,3 +108,49 @@ Environment variables in `.env`:
 - Optional Neo4j knowledge graph for repository analysis
 - MCP tools expose crawling and RAG capabilities to AI agents
 - Enhanced cancellation handling and progress reporting throughout
+
+## Directory Crawling with crawl_dir
+
+The `crawl_dir` tool allows you to crawl local directories and ingest files into the pipeline:
+
+### Usage
+```bash
+crawl_dir(
+    directory_path="/path/to/directory",
+    max_files=500,                    # Maximum files to process
+    max_file_size=1048576,           # 1MB file size limit
+    exclude_patterns=["*.log"],       # Patterns to exclude
+    include_patterns=None,            # Override text file detection
+    chunk_size=5000                   # Chunk size for processing
+)
+```
+
+### Features
+- **Smart File Detection**: Automatically detects text files by extension and MIME type
+- **Security**: Prevents access to sensitive system directories
+- **Configurable Limits**: Control file count, size, and processing parameters
+- **Pattern Matching**: Include/exclude files using custom patterns
+- **Full Pipeline Integration**: 
+  - Generates embeddings using the same pipeline as web crawling
+  - Stores in Qdrant vector database with rich metadata
+  - Optionally stores in Neo4j knowledge graph
+  - Supports code example extraction and indexing
+
+### Supported File Types
+- Source code: `.py`, `.js`, `.ts`, `.java`, `.c`, `.cpp`, `.go`, `.rs`, etc.
+- Documentation: `.md`, `.rst`, `.txt`
+- Configuration: `.json`, `.yaml`, `.toml`, `.ini`
+- Web files: `.html`, `.css`, `.xml`
+- Scripts: `.sh`, `.bash`, `.ps1`
+
+### Default Exclusions
+- Version control: `.git`, `.svn`, `.hg`
+- Dependencies: `node_modules`, `__pycache__`, `.venv`
+- Build artifacts: `dist`, `build`, `target`
+- System files: `.DS_Store`, `Thumbs.db`
+
+### Security Features
+- Path validation and normalization
+- Restricted access to system directories
+- File size and count limits
+- Permission checking

@@ -3,7 +3,10 @@ Web crawling helper functions.
 Enhanced with cancellation handling and progress reporting.
 """
 import asyncio
-from typing import List, Optional, Dict, Any
+import os
+import pathlib
+import mimetypes
+from typing import List, Optional, Dict, Any, Tuple
 from urllib.parse import urlparse, urldefrag
 from xml.etree import ElementTree
 import requests
@@ -11,7 +14,8 @@ from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, CacheMode, MemoryAdaptiv
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 from crawl4ai.content_filter_strategy import BM25ContentFilter, PruningContentFilter, LLMContentFilter
 from crawl4ai import LLMConfig
-import os
+
+from .timeout_utils import TimeoutConfig
 
 def is_sitemap(url: str) -> bool:
     return url.endswith('sitemap.xml') or 'sitemap' in urlparse(url).path
@@ -22,7 +26,7 @@ def is_txt(url: str) -> bool:
 def parse_sitemap(sitemap_url: str, max_urls: int = 100) -> List[str]:
     """Parse sitemap with URL limit to prevent overwhelming crawls."""
     try:
-        resp = requests.get(sitemap_url, timeout=30)
+        resp = requests.get(sitemap_url, timeout=TimeoutConfig.CRAWLER_SITEMAP_TIMEOUT)
         urls = []
         if resp.status_code == 200:
             try:
@@ -129,6 +133,8 @@ def get_enhanced_crawler_config(
         cache_mode=cache_mode,
         stream=False,
         markdown_generator=markdown_generator,
+        page_timeout=TimeoutConfig.BROWSER_PAGE_TIMEOUT,
+        wait_for_timeout=TimeoutConfig.BROWSER_WAIT_FOR_TIMEOUT,
     )
     
     return config
@@ -276,3 +282,193 @@ async def crawl_with_clean_markdown(
     }
     
     return response_data
+
+def is_text_file(file_path: str) -> bool:
+    """Check if a file is likely a text file based on extension and MIME type."""
+    text_extensions = {
+        '.txt', '.md', '.markdown', '.rst', '.py', '.js', '.html', '.htm', 
+        '.css', '.json', '.xml', '.yaml', '.yml', '.toml', '.ini', '.cfg',
+        '.sh', '.bash', '.zsh', '.ps1', '.bat', '.cmd', '.java', '.c', '.cpp',
+        '.h', '.hpp', '.cs', '.php', '.rb', '.go', '.rs', '.swift', '.kt',
+        '.ts', '.tsx', '.jsx', '.vue', '.svelte', '.sql', '.r', '.m', '.mm',
+        '.scala', '.clj', '.erl', '.ex', '.exs', '.lua', '.pl', '.pm', '.t',
+        '.tex', '.bib', '.log', '.conf', '.config', '.dockerfile', '.gitignore'
+    }
+    
+    file_ext = pathlib.Path(file_path).suffix.lower()
+    if file_ext in text_extensions:
+        return True
+    
+    try:
+        mime_type, _ = mimetypes.guess_type(file_path)
+        return mime_type and (mime_type.startswith('text/') or mime_type == 'application/json')
+    except Exception:
+        return False
+
+def should_exclude_path(path: pathlib.Path, exclude_patterns: List[str]) -> bool:
+    """Check if a path should be excluded based on patterns."""
+    path_str = str(path)
+    path_name = path.name
+    
+    default_excludes = {
+        '.git', '.svn', '.hg', '.bzr', '__pycache__', '.pytest_cache',
+        'node_modules', '.next', '.nuxt', 'dist', 'build', 'target',
+        '.venv', 'venv', '.env', 'env', '.tox', '.mypy_cache',
+        '.idea', '.vscode', '.vs', '.DS_Store', 'Thumbs.db',
+        '.coverage', '.nyc_output', 'coverage'
+    }
+    
+    if path_name in default_excludes:
+        return True
+    
+    for pattern in exclude_patterns:
+        if pattern in path_str or pattern in path_name:
+            return True
+    
+    return False
+
+async def crawl_directory(
+    directory_path: str,
+    max_files: int = 500,
+    max_file_size: int = 1024 * 1024,  # 1MB
+    exclude_patterns: Optional[List[str]] = None,
+    include_patterns: Optional[List[str]] = None
+) -> List[Tuple[str, str, Dict[str, Any]]]:
+    """
+    Crawl a local directory and extract text content from files.
+    
+    Args:
+        directory_path: Path to the directory to crawl
+        max_files: Maximum number of files to process
+        max_file_size: Maximum file size in bytes
+        exclude_patterns: Patterns to exclude from crawling
+        include_patterns: Patterns to include (if None, use default text file detection)
+        
+    Returns:
+        List of tuples: (file_path, content, metadata)
+    """
+    if exclude_patterns is None:
+        exclude_patterns = []
+    
+    directory = pathlib.Path(directory_path)
+    if not directory.exists() or not directory.is_dir():
+        raise ValueError(f"Directory does not exist or is not a directory: {directory_path}")
+    
+    results = []
+    files_processed = 0
+    
+    try:
+        for file_path in directory.rglob('*'):
+            if files_processed >= max_files:
+                break
+                
+            if not file_path.is_file():
+                continue
+                
+            if should_exclude_path(file_path, exclude_patterns):
+                continue
+            
+            # Check file size
+            try:
+                file_size = file_path.stat().st_size
+                if file_size > max_file_size:
+                    continue
+            except OSError:
+                continue
+            
+            # Check if it's a text file or matches include patterns
+            if include_patterns:
+                if not any(pattern in str(file_path) for pattern in include_patterns):
+                    continue
+            elif not is_text_file(str(file_path)):
+                continue
+            
+            try:
+                # Read file content
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+                
+                # Skip empty files
+                if not content.strip():
+                    continue
+                
+                # Create metadata
+                relative_path = file_path.relative_to(directory)
+                metadata = {
+                    "file_path": str(file_path),
+                    "relative_path": str(relative_path),
+                    "file_name": file_path.name,
+                    "file_extension": file_path.suffix,
+                    "file_size": file_size,
+                    "directory": str(directory),
+                    "mime_type": mimetypes.guess_type(str(file_path))[0] or "text/plain",
+                    "word_count": len(content.split()),
+                    "line_count": len(content.splitlines()),
+                    "char_count": len(content)
+                }
+                
+                results.append((str(file_path), content, metadata))
+                files_processed += 1
+                
+                # Yield control periodically for async operation
+                if files_processed % 10 == 0:
+                    await asyncio.sleep(0)
+                    
+            except (OSError, UnicodeDecodeError, PermissionError) as e:
+                # Skip files that can't be read
+                continue
+    
+    except Exception as e:
+        raise RuntimeError(f"Error crawling directory {directory_path}: {str(e)}")
+    
+    return results
+
+async def convert_directory_content_to_crawl_results(
+    file_results: List[Tuple[str, str, Dict[str, Any]]],
+    base_url_scheme: str = "file://"
+) -> List[CrawlResult]:
+    """
+    Convert directory crawling results to CrawlResult objects for pipeline compatibility.
+    
+    Args:
+        file_results: Results from crawl_directory
+        base_url_scheme: URL scheme to use for file paths
+        
+    Returns:
+        List of CrawlResult objects compatible with existing pipeline
+    """
+    crawl_results = []
+    
+    for file_path, content, metadata in file_results:
+        # Create a file:// URL for the file
+        file_url = f"{base_url_scheme}{file_path}"
+        
+        # Convert content to markdown if it's not already
+        if file_path.endswith(('.md', '.markdown')):
+            markdown_content = content
+        else:
+            # For code files, wrap in code blocks with language detection
+            file_ext = pathlib.Path(file_path).suffix.lstrip('.')
+            if file_ext in ['py', 'js', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'toml', 'sh', 'bash']:
+                markdown_content = f"```{file_ext}\n{content}\n```"
+            else:
+                markdown_content = f"```\n{content}\n```"
+        
+        # Create a minimal CrawlResult-like object
+        class DirectoryCrawlResult:
+            def __init__(self, url: str, markdown: str, metadata: Dict[str, Any]):
+                self.url = url
+                self.markdown = markdown
+                self.success = True
+                self.error_message = None
+                self.metadata = metadata
+        
+        result = DirectoryCrawlResult(
+            url=file_url,
+            markdown=markdown_content,
+            metadata=metadata
+        )
+        
+        crawl_results.append(result)
+    
+    return crawl_results

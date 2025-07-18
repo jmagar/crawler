@@ -35,12 +35,10 @@ class CancellationHandlingMiddleware(Middleware):
             duration_ms = (time.perf_counter() - start_time) * 1000
             logger.warning(f"Tool call cancelled after {duration_ms:.2f}ms")
             
-            # Return proper cancellation response instead of crashing
-            return {
-                "success": False,
-                "error": "Operation cancelled by client",
-                "elapsed_time_ms": round(duration_ms, 2)
-            }
+            # DON'T return a response - let MCP framework handle cancellation
+            # Returning a response here causes "Request already responded to" error
+            # because MCP protocol already handles the cancellation notification
+            raise
             
         except Exception as e:
             duration_ms = (time.perf_counter() - start_time) * 1000
