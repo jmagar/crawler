@@ -1,6 +1,8 @@
 """
 Web crawling helper functions.
+Enhanced with cancellation handling and progress reporting.
 """
+import asyncio
 from typing import List, Optional, Dict, Any
 from urllib.parse import urlparse, urldefrag
 from xml.etree import ElementTree

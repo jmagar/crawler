@@ -16,6 +16,7 @@ from typing import Optional, Any
 from fastmcp import FastMCP
 from fastmcp.server.middleware.timing import TimingMiddleware
 from fastmcp.utilities.logging import get_logger
+from src.core.cancellation_middleware import CancellationHandlingMiddleware
 from qdrant_client import QdrantClient
 from starlette.routing import Route
 from sentence_transformers import CrossEncoder
@@ -190,10 +191,15 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
         if crawler:
             try:
                 logger.info("📡 Closing web crawler...")
-                await asyncio.wait_for(crawler.__aexit__(None, None, None), timeout=5.0)
+                # Use asyncio.shield to protect cleanup from cancellation
+                await asyncio.shield(
+                    asyncio.wait_for(crawler.__aexit__(None, None, None), timeout=5.0)
+                )
                 logger.info("✓ Web crawler closed")
             except asyncio.TimeoutError:
                 logger.warning("⚠️ Web crawler close timeout, forcing shutdown")
+            except asyncio.CancelledError:
+                logger.warning("⚠️ Web crawler close cancelled, forcing shutdown")
             except Exception as e:
                 logger.error(f"Error closing web crawler: {e}")
 
@@ -204,6 +210,9 @@ mcp = FastMCP(
     lifespan=crawl4ai_lifespan,
     middleware=[TimingMiddleware()],
 )
+
+# Add custom cancellation handling middleware
+mcp.add_middleware(CancellationHandlingMiddleware())
 
 async def health_check(request):
     """Health check endpoint."""

@@ -1,5 +1,6 @@
 """
 Web crawling and RAG tools for the MCP server.
+Enhanced with comprehensive cancellation handling and progress reporting.
 """
 import os
 import json
@@ -43,11 +44,17 @@ from src.utils import (
 async def scrape(ctx: Context, url: str) -> str:
     """
     Crawl a single web page and store its content in Qdrant.
+    Enhanced with proper cancellation handling and progress reporting.
     """
+    start_time = time.time()
+    
     try:
         # Validate context and get components
         if not hasattr(ctx.request_context, 'lifespan_context'):
             return json.dumps({"success": False, "url": url, "error": "Server not properly initialized"}, indent=2)
+        
+        # Report initial progress
+        await ctx.report_progress(progress=0, total=100)
             
         crawler = ctx.request_context.lifespan_context.crawler
         qdrant_client = ctx.request_context.lifespan_context.qdrant_client
@@ -55,8 +62,14 @@ async def scrape(ctx: Context, url: str) -> str:
         if not crawler or not qdrant_client:
             return json.dumps({"success": False, "url": url, "error": "Required components not available"}, indent=2)
         
+        # Report crawling progress
+        await ctx.report_progress(progress=10, total=100)
+        
         run_config = get_enhanced_crawler_config()
         result = await crawler.arun(url=url, config=run_config)
+        
+        # Report crawling completed
+        await ctx.report_progress(progress=50, total=100)
         
         if result.success and result.markdown:
             source_id = urlparse(url).netloc or urlparse(url).path
@@ -83,7 +96,13 @@ async def scrape(ctx: Context, url: str) -> str:
             source_summary = await extract_source_summary(source_id, result.markdown[:5000])
             await update_source_info(qdrant_client, source_id, source_summary, total_word_count, elapsed_time)
             
-            await add_documents_to_qdrant(qdrant_client, urls, chunk_numbers, contents, metadatas, url_to_full_document)
+            # Report processing progress
+            await ctx.report_progress(progress=80, total=100)
+            
+            # Use asyncio.shield to protect critical cleanup from cancellation
+            await asyncio.shield(
+                add_documents_to_qdrant(qdrant_client, urls, chunk_numbers, contents, metadatas, url_to_full_document)
+            )
             
             code_blocks_stored = 0
             if os.getenv("USE_AGENTIC_RAG", "false") == "true":
@@ -297,8 +316,23 @@ async def crawl(ctx: Context, url: str, max_depth: int = 3, max_concurrent: int 
             }
         }, indent=2)
         
+    except asyncio.CancelledError:
+        # Handle cancellation gracefully
+        await ctx.warning(f"Crawling cancelled for {url}")
+        elapsed_time = time.time() - start_time
+        return json.dumps({
+            "success": False, 
+            "url": url, 
+            "error": "Operation cancelled by user",
+            "elapsed_time_seconds": round(elapsed_time, 2),
+            "partial_results": {
+                "pages_crawled": len(crawl_results) if 'crawl_results' in locals() else 0,
+                "chunks_stored": 0
+            }
+        }, indent=2)
+        
     except Exception as e:
-        print(f"Unexpected error in smart_crawl_url: {e}")
+        await ctx.error(f"Crawling failed for {url}: {str(e)}")
         elapsed_time = time.time() - start_time
         return json.dumps({
             "success": False, 
@@ -306,7 +340,7 @@ async def crawl(ctx: Context, url: str, max_depth: int = 3, max_concurrent: int 
             "error": str(e),
             "elapsed_time_seconds": round(elapsed_time, 2),
             "partial_results": {
-                "pages_crawled": len(crawl_results),
+                "pages_crawled": len(crawl_results) if 'crawl_results' in locals() else 0,
                 "chunks_stored": 0
             }
         }, indent=2)
@@ -325,7 +359,12 @@ async def available_sources(ctx: Context) -> str:
         )
         sources = [point.payload for point in scroll_result[0]]
         return json.dumps({"success": True, "sources": sources}, indent=2)
+    except asyncio.CancelledError:
+        # Handle cancellation gracefully
+        await ctx.warning("Available sources query cancelled")
+        return json.dumps({"success": False, "error": "Operation cancelled by user"}, indent=2)
     except Exception as e:
+        await ctx.error(f"Failed to get available sources: {str(e)}")
         return json.dumps({"success": False, "error": str(e)}, indent=2)
 
 @mcp.tool()
@@ -356,7 +395,12 @@ async def rag_query(ctx: Context, query: str, source: str = None, match_count: i
             "query": query,
             "results": results
         }, indent=2)
+    except asyncio.CancelledError:
+        # Handle cancellation gracefully
+        await ctx.warning(f"RAG query cancelled for: {query}")
+        return json.dumps({"success": False, "query": query, "error": "Operation cancelled by user"}, indent=2)
     except Exception as e:
+        await ctx.error(f"RAG query failed for '{query}': {str(e)}")
         return json.dumps({"success": False, "query": query, "error": str(e)}, indent=2)
 
 @mcp.tool()
@@ -384,6 +428,11 @@ async def search_code_examples(ctx: Context, query: str, source_id: str = None, 
             results = await rerank_results(process_pool, reranking_model, query, results, content_key="content")
 
         return json.dumps({"success": True, "query": query, "results": results}, indent=2)
+    except asyncio.CancelledError:
+        # Handle cancellation gracefully
+        await ctx.warning(f"Code search cancelled for: {query}")
+        return json.dumps({"success": False, "query": query, "error": "Operation cancelled by user"}, indent=2)
     except Exception as e:
+        await ctx.error(f"Code search failed for '{query}': {str(e)}")
         return json.dumps({"success": False, "query": query, "error": str(e)}, indent=2)
 
