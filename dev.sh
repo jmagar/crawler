@@ -20,6 +20,8 @@ if [ ! -f ".env" ]; then
 # Crawl4AI MCP Server Configuration
 HOST=0.0.0.0
 PORT=8051
+TRANSPORT=http
+MCP_PATH=/mcp/
 
 # Qdrant Configuration
 QDRANT_URL=http://localhost:6333

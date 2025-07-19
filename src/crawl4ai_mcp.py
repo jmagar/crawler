@@ -69,9 +69,11 @@ def main():
     parser = argparse.ArgumentParser(description="Crawl4AI MCP Server")
     parser.add_argument('--host', default=os.getenv("HOST", "0.0.0.0"), help='Host to bind to')
     parser.add_argument('--port', type=int, default=int(os.getenv("PORT", 8051)), help='Port to bind to')
+    parser.add_argument('--transport', default=os.getenv("TRANSPORT", "http"), help='Transport to use (http, sse, stdio)')
+    parser.add_argument('--path', default=os.getenv("MCP_PATH", "/mcp/"), help='Path for HTTP transport')
     
     args = parser.parse_args()
-    logger.info(f"🔧 Server args: host={args.host}, port={args.port}")
+    logger.info(f"🔧 Server args: host={args.host}, port={args.port}, transport={args.transport}, path={args.path}")
     
     # Setup signal handlers for graceful shutdown
     def signal_handler(signum, frame):
@@ -92,8 +94,8 @@ def main():
     logger.info("🔧 Tools imported and registered")
     
     try:
-        logger.info(f"🚀 STARTING MCP SERVER: transport=sse, host={args.host}, port={args.port}, path=/mcp/")
-        mcp.run(transport="sse", host=args.host, port=args.port, path="/mcp/")
+        logger.info(f"🚀 STARTING MCP SERVER: transport={args.transport}, host={args.host}, port={args.port}, path={args.path}")
+        mcp.run(transport=args.transport, host=args.host, port=args.port, path=args.path)
         logger.info("🏁 MCP SERVER RUN COMPLETED NORMALLY")
     except KeyboardInterrupt:
         logger.warning("🛑 KEYBOARD INTERRUPT RECEIVED")

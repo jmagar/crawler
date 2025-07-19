@@ -110,7 +110,8 @@ Create `.env` file:
 # MCP Server Configuration
 HOST=0.0.0.0
 PORT=8051
-TRANSPORT=sse
+TRANSPORT=http
+MCP_PATH=/mcp/
 
 # Qdrant Configuration (Local Vector Database)
 QDRANT_URL=http://localhost:6333
@@ -189,21 +190,26 @@ USE_KNOWLEDGE_GRAPH=true
 
 ## 🌐 MCP Client Integration
 
-### Claude Code
+### Claude Code (Streamable HTTP - Recommended)
 ```bash
-claude mcp add --transport sse crawl4ai-rag http://localhost:8051/sse
+claude mcp add --transport http crawl4ai-rag http://localhost:8051/mcp/
 ```
 
-### General MCP Clients (SSE)
+### General MCP Clients (Streamable HTTP)
 ```json
 {
   "mcpServers": {
     "crawl4ai-rag": {
-      "transport": "sse",
-      "url": "http://localhost:8051/sse"
+      "transport": "http",
+      "url": "http://localhost:8051/mcp/"
     }
   }
 }
+```
+
+### Legacy SSE Support (Deprecated)
+```bash
+claude mcp add --transport sse crawl4ai-rag http://localhost:8051/sse
 ```
 
 ### Stdio Configuration
@@ -242,14 +248,17 @@ claude mcp add --transport sse crawl4ai-rag http://localhost:8051/sse
 
 ```bash
 # Test single page crawling
-curl -X POST http://localhost:8051/tools/crawl_single_page \
+curl -X POST http://localhost:8051/mcp/tools/crawl_single_page \
   -H "Content-Type: application/json" \
   -d '{"url": "https://docs.python.org/3/tutorial/"}'
 
 # Test RAG query
-curl -X POST http://localhost:8051/tools/perform_rag_query \
+curl -X POST http://localhost:8051/mcp/tools/perform_rag_query \
   -H "Content-Type: application/json" \
   -d '{"query": "python functions", "match_count": 5}'
+
+# Health check
+curl http://localhost:8051/health
 ```
 
 ## 🎯 Performance & Scalability
