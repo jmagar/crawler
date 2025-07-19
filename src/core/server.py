@@ -1,11 +1,10 @@
 """
-Core server setup, context, and lifecycle management.
-Hot reload test - this comment was added to test the hot reload functionality!
-🔥 HOT RELOAD TEST #2 - Let's see if this triggers a restart!
+Core server setup, context, and lifecycle management with proper cancellation handling.
 """
 import os
 import logging
 import multiprocessing
+import asyncio
 import concurrent.futures
 from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
@@ -15,12 +14,15 @@ from typing import Optional, Any
 from fastmcp import FastMCP
 from fastmcp.server.middleware.timing import TimingMiddleware
 from fastmcp.utilities.logging import get_logger
+from src.core.cancellation_middleware import CancellationHandlingMiddleware
 from qdrant_client import QdrantClient
 from starlette.routing import Route
 from sentence_transformers import CrossEncoder
 from crawl4ai import AsyncWebCrawler, BrowserConfig
 
 from src.core.validation import validate_neo4j_connection, format_neo4j_error
+from src.core.timeout_utils import TimeoutConfig
+from src.core.timeout_middleware import TimeoutMiddleware
 from src.utils import get_qdrant_client, setup_qdrant_collections
 from src.resources import register_source_resources
 
@@ -30,21 +32,37 @@ if os.getenv("USE_KNOWLEDGE_GRAPH", "false") == "true":
     from knowledge_graph_validator import KnowledgeGraphValidator
     from parse_repo_into_neo4j import DirectNeo4jExtractor
 
-# Get the logger
+# Get the logger and configure file logging
 logger = get_logger(__name__)
-log_level = os.getenv("FASTMCP_LOG_LEVEL", "INFO").upper()
+log_level = os.getenv("FASTMCP_LOG_LEVEL", "DEBUG").upper()
 logger.setLevel(log_level)
 
-# Create a handler
-handler = logging.StreamHandler()
-handler.setLevel(log_level)
+# Setup file logging for server events
+import os
+from datetime import datetime
+log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
+os.makedirs(log_dir, exist_ok=True)
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+server_log_file = os.path.join(log_dir, f'server_{timestamp}.log')
 
-# Create a formatter and add it to the handler
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
+# Create file handler
+file_handler = logging.FileHandler(server_log_file, mode='w')
+file_handler.setLevel(log_level)
 
-# Add the handler to the logger
-logger.addHandler(handler)
+# Create stream handler
+stream_handler = logging.StreamHandler()
+stream_handler.setLevel(log_level)
+
+# Create a formatter and add it to both handlers
+formatter = logging.Formatter('%(asctime)s [%(levelname)8s] %(name)s:%(lineno)d - %(message)s')
+file_handler.setFormatter(formatter)
+stream_handler.setFormatter(formatter)
+
+# Add handlers to the logger
+logger.addHandler(file_handler)
+logger.addHandler(stream_handler)
+
+logger.info(f"🔍 SERVER LOGGING - Writing to: {server_log_file}")
 
 @dataclass
 class Crawl4AIContext:
@@ -73,7 +91,14 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
     Manages the application's lifecycle for all necessary clients and resources.
     Enhanced with proper error handling and cleanup for interrupted operations.
     """
-    logger.info("🚀 Initializing Crawl4AI MCP Server...")
+    logger.info("🚀🚀🚀 CRAWL4AI LIFESPAN STARTING 🚀🚀🚀")
+    logger.info(f"🔍 Server instance: {server}")
+    logger.info(f"🔍 Current task: {asyncio.current_task()}")
+    
+    import traceback
+    logger.info("🔍 Lifespan stack trace:")
+    for line in traceback.format_stack():
+        logger.info(f"  {line.strip()}")
     
     # Initialize components with proper error handling
     browser_config = BrowserConfig(
@@ -189,20 +214,28 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
         if crawler:
             try:
                 logger.info("📡 Closing web crawler...")
-                await asyncio.wait_for(crawler.__aexit__(None, None, None), timeout=5.0)
+                # Use asyncio.shield to protect cleanup from cancellation
+                await asyncio.shield(
+                    asyncio.wait_for(crawler.__aexit__(None, None, None), timeout=TimeoutConfig.SERVER_CLEANUP_TIMEOUT)
+                )
                 logger.info("✓ Web crawler closed")
             except asyncio.TimeoutError:
                 logger.warning("⚠️ Web crawler close timeout, forcing shutdown")
+            except asyncio.CancelledError:
+                logger.warning("⚠️ Web crawler close cancelled, forcing shutdown")
             except Exception as e:
                 logger.error(f"Error closing web crawler: {e}")
 
         logger.info("✨ Cleanup completed")
 
+# Create the FastMCP server with cancellation handling middleware
 mcp = FastMCP(
     "mcp-crawl4ai-rag",
     lifespan=crawl4ai_lifespan,
-    middleware=[TimingMiddleware()],
+    middleware=[TimingMiddleware(), CancellationHandlingMiddleware()],
 )
+
+# CancellationHandlingMiddleware now handles cancellation gracefully without response conflicts
 
 async def health_check(request):
     """Health check endpoint."""

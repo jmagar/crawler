@@ -1,0 +1,152 @@
+version: '3.8'
+
+# Optimized Docker Compose for Intel i7-13700K + 32GB DDR5 + RTX 4070
+# Based on official Intel specs and Neo4j performance documentation
+
+# Logging configuration template
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: crawler-neo4j-13700k
+    restart: unless-stopped
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      # Authentication
+      - NEO4J_AUTH=neo4j/password
+      
+      # Basic optimizations
+      - NEO4J_PLUGINS=apoc
+      - NEO4J_dbms_security_procedures_unrestricted=apoc.*
+      
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_conf:/conf
+      - neo4j_plugins:/plugins
+    networks:
+      - crawler-network
+    
+    # Resource limits optimized for i7-13700K (16 cores, 24 threads)
+    deploy:
+      resources:
+        limits:
+          memory: 24G       # Neo4j gets most of the memory allocation
+          cpus: '11.0'      # Can use all cores when needed
+        reservations:
+          memory: 10G       # Minimum guarantee
+          cpus: '8.0'       # Minimum CPU guarantee
+    
+    # CPU affinity - bind to primary cores for main database work
+    cpuset: "0-15"          # Primary cores (0-15)
+    
+    # Health check
+    healthcheck:
+      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "${NEO4J_PASSWORD}", "RETURN 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    
+    # Optimize for NVMe SSDs
+    tmpfs:
+      - /tmp:noexec,nosuid,size=2g
+    
+    # Logging configuration
+    logging: *default-logging
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: crawler-qdrant-13700k
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"  # gRPC port
+    environment:
+      # Performance configuration optimized for RTX 4070 and high memory
+      - QDRANT__SERVICE__MAX_REQUEST_SIZE_MB=64
+      - QDRANT__SERVICE__GRPC_PORT=6334
+      - QDRANT__SERVICE__HTTP_PORT=6333
+      
+      # Storage optimizations for NVMe
+      - QDRANT__STORAGE__STORAGE_PATH=/qdrant/storage
+      - QDRANT__STORAGE__SNAPSHOTS_PATH=/qdrant/snapshots
+      - QDRANT__STORAGE__WAL_CAPACITY_MB=64
+      - QDRANT__STORAGE__WAL_SEGMENTS_AHEAD=2
+      
+      # Memory and performance settings for 32GB RAM + modern CPU
+      - QDRANT__SERVICE__MAX_WORKERS=12
+      - QDRANT__OPTIMIZER__DELETED_THRESHOLD=0.15
+      - QDRANT__OPTIMIZER__VACUUM_MIN_VECTOR_NUMBER=2000
+      - QDRANT__OPTIMIZER__DEFAULT_SEGMENT_NUMBER=4
+      
+      # Enable HNSW optimizations
+      - QDRANT__OPTIMIZER__INDEXING_THRESHOLD=20000
+      
+    volumes:
+      - qdrant_data:/qdrant/storage
+      - qdrant_snapshots:/qdrant/snapshots
+    networks:
+      - crawler-network
+    
+    # Resource limits for Qdrant (can use E-cores efficiently)
+    deploy:
+      resources:
+        limits:
+          memory: 6G        # Generous for vector operations
+          cpus: '6.0'       # Use secondary cores
+        reservations:
+          memory: 2G
+          cpus: '4.0'
+    
+    # CPU affinity - bind to secondary cores for background vector work
+    cpuset: "16-21"         # Secondary cores (16-21)
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    
+    # Logging configuration
+    logging: *default-logging
+
+
+
+volumes:
+  neo4j_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/neo4j
+  neo4j_logs:
+  neo4j_conf:
+  neo4j_plugins:
+  qdrant_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/qdrant
+  qdrant_snapshots:
+
+networks:
+  crawler-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: crawler-br0
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.21.0.0/16
+          gateway: 172.21.0.1
+

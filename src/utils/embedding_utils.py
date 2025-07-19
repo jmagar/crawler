@@ -8,7 +8,7 @@ import httpx
 
 # Configuration
 EMBEDDING_MODEL_URL = os.getenv("EMBEDDING_MODEL_URL", "http://localhost:8080/embed")
-EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", 768))
+EMBEDDING_DIMENSION = int(os.getenv("EMBEDDING_DIMENSION", 1024))
 LLM_MODEL_URL = os.getenv("LLM_MODEL_URL") # For Ollama, e.g., http://localhost:11434/api/generate
 LLM_MODEL_NAME = os.getenv("LLM_MODEL_NAME", "phi3") # e.g., phi3
 

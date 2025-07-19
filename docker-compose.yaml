@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  neo4j:
+    image: neo4j:5.15-community
+    container_name: crawler-neo4j
+    restart: unless-stopped
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    environment:
+      - NEO4J_AUTH=neo4j/password
+      - NEO4J_PLUGINS=["apoc"]
+      # Restricted APOC procedures - only allow specific procedures needed for repository analysis
+      - NEO4J_dbms_security_procedures_allowlist=apoc.util.*,apoc.text.*,apoc.convert.*
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_conf:/conf
+      - neo4j_plugins:/plugins
+    networks:
+      - crawler-network
+
+volumes:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_conf:
+  neo4j_plugins:
+
+networks:
+  crawler-network:
+    driver: bridge

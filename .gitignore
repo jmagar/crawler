@@ -1,7 +1,97 @@
+# Environment and Configuration
 .env
+.env.local
+.env.production
+.env.staging
+.env.development
 .venv
-__pycache__
-crawl4ai_mcp.egg-info
-repos
-.claude
+venv/
+env/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Database files (Neo4j, Qdrant, etc.)
+data/
+*.db
+*.sqlite
+*.sqlite3
+*.mdb
+*.lock
+*.tmp.0
+
+# Neo4j specific
+neostore*
+*.counts.db
+*.indexstats.db
+*.labeltokenstore.*
+*.nodestore.*
+*.propertystore.*
+*.relationshipstore.*
+*.relationshiptypestore.*
+*.schemastore.*
+database_lock
+store_lock
+
+# Qdrant specific
+raft_state.json
+aliases/
+snapshots/
+
+# Backup and temporary files
+*.bak
+*.backup
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Logs
+logs/
+*.log
+
+# IDE and Editor files
+.idea/
+.vscode/
+.vs/
+*.swp
+*.swo
+
+# OS specific
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project specific
+repos/
+.claude/
 test_script_hallucination*
+
+# Security files (prevent accidental commits)
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa*
+id_dsa*
+id_ecdsa*
+id_ed25519*
+credentials.json
+service-account.json
+.netrc
+.htpasswd
+
+# Package manager files with potential tokens
+.npmrc
+.pypirc
+.gem/credentials
