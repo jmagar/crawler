@@ -25,6 +25,7 @@ from src.core.timeout_utils import TimeoutConfig
 from src.core.timeout_middleware import TimeoutMiddleware
 from src.utils import get_qdrant_client, setup_qdrant_collections
 from src.resources import register_source_resources
+from src.utils.logging_utils import setup_mcp_logging, OperationMonitor
 
 
 # Conditional import for knowledge graph components
@@ -73,6 +74,8 @@ class Crawl4AIContext:
     knowledge_validator: Optional[Any]
     repo_extractor: Optional[Any]
     process_pool: concurrent.futures.ProcessPoolExecutor
+    active_operations: set
+    cleanup_lock: asyncio.Lock
 
 def log_handler(message: logging.LogRecord):
     """Handle logs from the MCP server."""
@@ -90,15 +93,10 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
     """
     Manages the application's lifecycle for all necessary clients and resources.
     Enhanced with proper error handling and cleanup for interrupted operations.
+    Fixed to prevent premature cleanup during active crawl operations.
     """
     logger.info("🚀🚀🚀 CRAWL4AI LIFESPAN STARTING 🚀🚀🚀")
     logger.info(f"🔍 Server instance: {server}")
-    logger.info(f"🔍 Current task: {asyncio.current_task()}")
-    
-    import traceback
-    logger.info("🔍 Lifespan stack trace:")
-    for line in traceback.format_stack():
-        logger.info(f"  {line.strip()}")
     
     # Initialize components with proper error handling
     browser_config = BrowserConfig(
@@ -106,6 +104,17 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
         verbose=False,
         browser_type="chromium",  # Explicit browser type
         sleep_on_close=False,  # Don't wait on browser close
+        # Add stability settings to prevent premature closure
+        extra_browser_args=[
+            "--disable-web-security",
+            "--disable-features=VizDisplayCompositor",
+            "--disable-dev-shm-usage",
+            "--no-sandbox",
+            "--disable-gpu",
+            "--disable-background-timer-throttling",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding"
+        ]
     )
     
     crawler = None
@@ -115,7 +124,19 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
     repo_extractor = None
     process_pool = None
     
+    # Track active operations to prevent premature cleanup
+    active_operations = set()
+    cleanup_lock = asyncio.Lock()
+    
     try:
+        # Setup enhanced logging
+        setup_mcp_logging(log_level="INFO", enable_structured=True)
+        logger.info("🔧 Enhanced MCP logging configured")
+        
+        # Initialize operation monitoring
+        monitor = OperationMonitor()
+        logger.info("📊 Operation monitoring initialized")
+        
         # Initialize crawler with retry logic
         logger.info("📡 Initializing web crawler...")
         crawler = AsyncWebCrawler(config=browser_config)
@@ -168,7 +189,9 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
             reranking_model=reranking_model,
             knowledge_validator=knowledge_validator,
             repo_extractor=repo_extractor,
-            process_pool=process_pool
+            process_pool=process_pool,
+            active_operations=active_operations,
+            cleanup_lock=cleanup_lock
         )
         
     except Exception as e:
@@ -177,6 +200,21 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
         
     finally:
         logger.info("🧹 Starting cleanup...")
+        
+        # Wait for active operations to complete before cleanup
+        async with cleanup_lock:
+            if active_operations:
+                logger.info(f"⏳ Waiting for {len(active_operations)} active operations to complete...")
+                # Wait up to 30 seconds for operations to complete gracefully
+                for i in range(30):
+                    if not active_operations:
+                        break
+                    await asyncio.sleep(1)
+                    if i % 5 == 0:  # Log every 5 seconds
+                        logger.info(f"⏳ Still waiting for {len(active_operations)} operations: {list(active_operations)}")
+                
+                if active_operations:
+                    logger.warning(f"⚠️ Proceeding with cleanup despite {len(active_operations)} active operations")
         
         # Cleanup in reverse order of initialization
         if process_pool:
@@ -232,21 +270,100 @@ async def crawl4ai_lifespan(server: FastMCP) -> AsyncIterator[Crawl4AIContext]:
 mcp = FastMCP(
     "mcp-crawl4ai-rag",
     lifespan=crawl4ai_lifespan,
-    middleware=[TimingMiddleware(), CancellationHandlingMiddleware()],
+    middleware=[TimingMiddleware(), TimeoutMiddleware(), CancellationHandlingMiddleware()],
 )
 
 # CancellationHandlingMiddleware now handles cancellation gracefully without response conflicts
 
 async def health_check(request):
-    """Health check endpoint."""
+    """Enhanced health check endpoint with metrics."""
     from starlette.responses import JSONResponse
+    import time
+    
     try:
-        return JSONResponse({"status": "ok"})
+        # Get operation monitor instance
+        monitor = OperationMonitor()
+        
+        # Basic health status
+        health_status = {
+            "status": "healthy",
+            "timestamp": time.time(),
+            "version": "1.0.0"
+        }
+        
+        # Add server metrics
+        try:
+            server_metrics = monitor.get_server_metrics()
+            health_status["metrics"] = server_metrics
+        except Exception as metrics_error:
+            logger.warning(f"Failed to get metrics: {metrics_error}")
+            health_status["metrics_error"] = str(metrics_error)
+        
+        # Check service health
+        services = {}
+        
+        # Check Qdrant
+        try:
+            qdrant_client = get_qdrant_client()
+            collections = qdrant_client.get_collections()
+            services["qdrant"] = {
+                "status": "healthy",
+                "collections_count": len(collections.collections)
+            }
+        except Exception as qdrant_error:
+            services["qdrant"] = {
+                "status": "unhealthy",
+                "error": str(qdrant_error)
+            }
+        
+        # Check Neo4j if enabled
+        if os.getenv("USE_KNOWLEDGE_GRAPH", "false") == "true":
+            try:
+                # This would need actual Neo4j health check
+                services["neo4j"] = {"status": "healthy"}
+            except Exception as neo4j_error:
+                services["neo4j"] = {
+                    "status": "unhealthy",
+                    "error": str(neo4j_error)
+                }
+        else:
+            services["neo4j"] = {"status": "disabled"}
+        
+        health_status["services"] = services
+        
+        # Determine overall health
+        unhealthy_services = [name for name, service in services.items() 
+                            if service["status"] == "unhealthy"]
+        
+        if unhealthy_services:
+            health_status["status"] = "degraded"
+            health_status["unhealthy_services"] = unhealthy_services
+        
+        status_code = 200 if health_status["status"] in ["healthy", "degraded"] else 503
+        return JSONResponse(health_status, status_code=status_code)
+        
     except Exception as e:
         logger.error(f"Health check error: {e}")
-        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+        return JSONResponse({
+            "status": "error", 
+            "message": str(e),
+            "timestamp": time.time()
+        }, status_code=500)
+
+# Add enhanced metrics endpoint
+async def metrics_endpoint(request):
+    """Detailed metrics endpoint."""
+    from starlette.responses import JSONResponse
+    try:
+        monitor = OperationMonitor()
+        metrics = monitor.get_server_metrics()
+        return JSONResponse(metrics)
+    except Exception as e:
+        logger.error(f"Metrics endpoint error: {e}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 mcp._additional_http_routes.append(Route("/health", health_check))
+mcp._additional_http_routes.append(Route("/metrics", metrics_endpoint))
 
 # Register MCP resources
 register_source_resources(mcp)

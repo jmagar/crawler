@@ -114,7 +114,7 @@ class TimeoutMiddleware(Middleware):
             'scrape': TimeoutConfig.CRAWLER_PAGE_TIMEOUT,      # 5 minutes for single page
             
             # Database tools - moderate timeouts
-            'rag_query': TimeoutConfig.QDRANT_OPERATION_TIMEOUT,        # 30 seconds
+            'rag_query': TimeoutConfig.MCP_TOOL_TIMEOUT,              # 10 minutes for complex operations
             'available_sources': TimeoutConfig.QDRANT_SCROLL_TIMEOUT,   # 1 minute
             'search_code_examples': TimeoutConfig.QDRANT_OPERATION_TIMEOUT,
             
