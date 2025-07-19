@@ -4,15 +4,14 @@ Performance monitoring and metrics collection for the knowledge graph system.
 import asyncio
 import logging
 import time
-from typing import Dict, Any, List, Optional, Callable
+from typing import Any, Optional, Callable
 from dataclasses import dataclass, field
 from collections import defaultdict, deque
 import statistics
 import json
-from pathlib import Path
 import psutil
 import threading
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +22,7 @@ class PerformanceMetric:
     value: float
     timestamp: float
     category: str = "general"
-    tags: Dict[str, str] = field(default_factory=dict)
+    tags: dict[str, str] = field(default_factory=dict)
 
 @dataclass
 class SystemMetrics:
@@ -72,12 +71,12 @@ class PerformanceMonitor:
             self.collection_task.cancel()
             try:
                 await self.collection_task
-            except asyncio.CancelledError:
-                pass
+            with suppress(asyncio.CancelledError):
+                await self.collection_task
         logger.info("Performance monitoring stopped")
     
     def record_metric(self, name: str, value: float, category: str = "general", 
-                     tags: Dict[str, str] = None):
+                     tags: dict[str, str] = None):
         """Record a performance metric.
         
         Args:
@@ -319,11 +318,14 @@ class PerformanceMonitor:
                 
                 await asyncio.sleep(self.collection_interval)
                 
-            except Exception as e:
+            except (OSError, psutil.Error, asyncio.TimeoutError) as e:
                 logger.error(f"Error collecting system metrics: {str(e)}")
                 await asyncio.sleep(self.collection_interval)
+            except Exception as e:
+                logger.critical(f"Unexpected error in system metrics collection: {str(e)}")
+                await asyncio.sleep(self.collection_interval)
     
-    def _percentile(self, values: List[float], percentile: float) -> float:
+    def _percentile(self, values: list[float], percentile: float) -> float:
         """Calculate percentile of values.
         
         Args:
@@ -360,7 +362,7 @@ class QueryPerformanceMonitor:
         self.slow_query_threshold = 1.0  # seconds
     
     @asynccontextmanager
-    async def monitor_query(self, query_name: str, query: str, params: Dict[str, Any] = None):
+    async def monitor_query(self, query_name: str, query: str, params: dict[str, Any] = None):
         """Monitor a Neo4j query execution.
         
         Args:
@@ -370,7 +372,7 @@ class QueryPerformanceMonitor:
         """
         start_time = time.time()
         
-        # Hash query for caching analysis
+        # Hash query for caching analysis (MD5 used for performance tracking only, not security)
         import hashlib
         query_hash = hashlib.md5(query.encode()).hexdigest()[:8]
         

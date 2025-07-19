@@ -17,6 +17,10 @@ logger = logging.getLogger(__name__)
 class KnowledgeGraphValidator:
     """Validate AI-generated scripts against knowledge stored in Neo4j."""
     
+    # Confidence threshold below which hallucinations are considered detected
+    # A score of 0.7 indicates that we require 70% confidence to consider the script valid
+    HALLUCINATION_CONFIDENCE_THRESHOLD = 0.7
+    
     def __init__(self, neo4j_uri: str, neo4j_user: str, neo4j_password: str):
         """Initialize the knowledge graph validator."""
         self.neo4j_uri = neo4j_uri
@@ -88,7 +92,7 @@ class KnowledgeGraphValidator:
             
             # Calculate final confidence score
             validation_result["confidence_score"] = self._calculate_confidence_score(validation_result)
-            validation_result["hallucinations_detected"] = validation_result["confidence_score"] < 0.7
+            validation_result["hallucinations_detected"] = validation_result["confidence_score"] < self.HALLUCINATION_CONFIDENCE_THRESHOLD
             
             return validation_result
             

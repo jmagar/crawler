@@ -3,7 +3,7 @@ Query pagination utilities for Neo4j knowledge graph queries.
 """
 import asyncio
 import logging
-from typing import Dict, Any, List, Optional, AsyncIterator, Tuple
+from typing import Any, Optional, AsyncIterator
 from dataclasses import dataclass
 import time
 
@@ -21,7 +21,7 @@ class PaginationConfig:
 @dataclass
 class QueryResult:
     """Result of a paginated query."""
-    data: List[Dict[str, Any]]
+    data: list[dict[str, Any]]
     total_count: int
     page: int
     page_size: int
@@ -45,7 +45,7 @@ class PaginatedQueryExecutor:
     async def execute_paginated_query(
         self, 
         query: str, 
-        params: Dict[str, Any] = None,
+        params: dict[str, Any] = None,
         page: int = 1
     ) -> QueryResult:
         """Execute a single paginated query.
@@ -99,8 +99,8 @@ class PaginatedQueryExecutor:
     async def stream_all_results(
         self, 
         query: str, 
-        params: Dict[str, Any] = None
-    ) -> AsyncIterator[Dict[str, Any]]:
+        params: dict[str, Any] = None
+    ) -> AsyncIterator[dict[str, Any]]:
         """Stream all results from a query, handling pagination automatically.
         
         Args:
@@ -136,10 +136,10 @@ class PaginatedQueryExecutor:
     async def get_page_batch(
         self, 
         query: str, 
-        params: Dict[str, Any] = None,
+        params: dict[str, Any] = None,
         start_page: int = 1,
         num_pages: int = 5
-    ) -> List[QueryResult]:
+    ) -> list[QueryResult]:
         """Get multiple pages in a batch for better performance.
         
         Args:
@@ -170,7 +170,7 @@ class PaginatedQueryExecutor:
         
         return valid_results
     
-    async def _get_total_count(self, query: str, params: Dict[str, Any]) -> int:
+    async def _get_total_count(self, query: str, params: dict[str, Any]) -> int:
         """Get total count for a query by converting it to a count query.
         
         Args:
@@ -202,26 +202,65 @@ class PaginatedQueryExecutor:
             
         Returns:
             Count version of the query
+            
+        Raises:
+            ValueError: If the query doesn't contain a RETURN clause
         """
-        # Simple conversion - replace RETURN clause with COUNT
-        lines = query.strip().split('\n')
+        import re
         
-        # Find the RETURN line and replace it
-        for i, line in enumerate(lines):
-            line_upper = line.strip().upper()
-            if line_upper.startswith('RETURN'):
-                # Replace with count
-                lines[i] = 'RETURN COUNT(*) as count'
-                break
+        # Normalize whitespace and remove comments
+        normalized_query = self._preprocess_query(query)
+        
+        # Check if RETURN clause exists
+        if not re.search(r'\bRETURN\b', normalized_query, re.IGNORECASE):
+            raise ValueError("Query must contain a RETURN clause to convert to count query")
+        
+        # Handle DISTINCT in RETURN clause
+        distinct_pattern = r'\bRETURN\s+DISTINCT\b'
+        has_distinct = re.search(distinct_pattern, normalized_query, re.IGNORECASE)
+        
+        if has_distinct:
+            # For DISTINCT queries, preserve the distinctness in count
+            count_replacement = 'RETURN COUNT(DISTINCT *) as count'
+        else:
+            count_replacement = 'RETURN COUNT(*) as count'
+        
+        # Replace RETURN clause (handles multi-line returns)
+        return_pattern = r'\bRETURN\b.*?(?=\s*(?:ORDER\s+BY|SKIP|LIMIT|$))'
+        count_query = re.sub(return_pattern, count_replacement, normalized_query, 
+                           flags=re.IGNORECASE | re.DOTALL)
         
         # Remove SKIP and LIMIT clauses
-        filtered_lines = []
-        for line in lines:
-            line_upper = line.strip().upper()
-            if not (line_upper.startswith('SKIP') or line_upper.startswith('LIMIT')):
-                filtered_lines.append(line)
+        count_query = re.sub(r'\s*\bSKIP\s+\d+\b', '', count_query, flags=re.IGNORECASE)
+        count_query = re.sub(r'\s*\bLIMIT\s+\d+\b', '', count_query, flags=re.IGNORECASE)
         
-        return '\n'.join(filtered_lines)
+        # Remove ORDER BY since it's not needed for counting
+        count_query = re.sub(r'\s*\bORDER\s+BY\b.*?(?=\s*(?:SKIP|LIMIT|$))', '', 
+                           count_query, flags=re.IGNORECASE | re.DOTALL)
+        
+        return count_query.strip()
+    
+    def _preprocess_query(self, query: str) -> str:
+        """Preprocess query by removing comments and normalizing whitespace.
+        
+        Args:
+            query: Raw Cypher query
+            
+        Returns:
+            Preprocessed query
+        """
+        import re
+        
+        # Remove single-line comments (// comment)
+        query = re.sub(r'//.*$', '', query, flags=re.MULTILINE)
+        
+        # Remove multi-line comments (/* comment */)
+        query = re.sub(r'/\*.*?\*/', '', query, flags=re.DOTALL)
+        
+        # Normalize whitespace
+        query = re.sub(r'\s+', ' ', query)
+        
+        return query.strip()
 
 class GraphQueryOptimizer:
     """Optimize Neo4j graph queries for better performance."""
@@ -235,7 +274,7 @@ class GraphQueryOptimizer:
         self.session = session
         self.query_cache = {}
     
-    async def create_performance_indexes(self) -> Dict[str, bool]:
+    async def create_performance_indexes(self) -> dict[str, bool]:
         """Create indexes for better query performance.
         
         Returns:
@@ -262,7 +301,7 @@ class GraphQueryOptimizer:
         
         return results
     
-    async def analyze_query_performance(self, query: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+    async def analyze_query_performance(self, query: str, params: dict[str, Any] = None) -> dict[str, Any]:
         """Analyze query performance using EXPLAIN.
         
         Args:

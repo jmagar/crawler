@@ -3,7 +3,7 @@ HallucinationReporter for generating comprehensive reports on AI script validati
 """
 import logging
 from typing import Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 

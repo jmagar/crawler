@@ -4,10 +4,9 @@ Hardware-optimized configuration for i7-3770K, 32GB RAM, RTX 4070 12GB VRAM.
 This module provides optimized settings tailored for the specific hardware configuration
 to maximize performance while staying within hardware limits.
 """
-import os
 import psutil
 import logging
-from typing import Dict, Any
+from typing import Any
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -22,7 +21,7 @@ class HardwareProfile:
     gpu_vram_gb: int
     cpu_model: str
     
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate hardware profile."""
         if self.cpu_threads < self.cpu_cores:
             self.cpu_threads = self.cpu_cores
@@ -48,7 +47,7 @@ class HardwareOptimizedConfig:
         self.profile = profile
         self.config = self._generate_config()
     
-    def _generate_config(self) -> Dict[str, Any]:
+    def _generate_config(self) -> dict[str, Any]:
         """Generate optimized configuration for the hardware."""
         # Calculate optimal settings based on hardware
         
@@ -107,7 +106,7 @@ class HardwareOptimizedConfig:
             "prefer_memory_over_cpu": True,  # Leverage high RAM amount
         }
     
-    def get_neo4j_docker_config(self) -> Dict[str, str]:
+    def get_neo4j_docker_config(self) -> dict[str, str]:
         """Get Neo4j Docker environment configuration."""
         return {
             "NEO4J_dbms_memory_heap_initial_size": self.config["neo4j_heap_initial"],
@@ -191,7 +190,7 @@ class ResourceGuard:
         self.max_memory_percent = config.config["max_memory_usage_percent"]
         self.max_cpu_percent = config.config["cpu_usage_threshold"]
         
-    def check_resources(self) -> Dict[str, Any]:
+    def check_resources(self) -> dict[str, Any]:
         """Check current resource usage."""
         memory = psutil.virtual_memory()
         cpu_percent = psutil.cpu_percent(interval=1)
@@ -209,7 +208,7 @@ class ResourceGuard:
         resources = self.check_resources()
         return resources["memory_warning"] or resources["cpu_warning"]
     
-    def get_throttling_suggestions(self) -> Dict[str, str]:
+    def get_throttling_suggestions(self) -> dict[str, str]:
         """Get suggestions for throttling operations."""
         resources = self.check_resources()
         suggestions = {}

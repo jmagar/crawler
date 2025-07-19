@@ -498,12 +498,18 @@ class AIScriptAnalyzer:
             if any(sus in imp for sus in suspicious_imports):
                 suspicious.append(f"suspicious_import:{imp}")
         
-        # Check for hardcoded secrets patterns
+        # Check for hardcoded secrets patterns and environment variable access
         secret_patterns = [
+            # Hardcoded secret patterns
             r'password\s*=\s*["\'][^"\']+["\']',
             r'api_key\s*=\s*["\'][^"\']+["\']',
             r'secret\s*=\s*["\'][^"\']+["\']',
-            r'token\s*=\s*["\'][^"\']+["\']'
+            r'token\s*=\s*["\'][^"\']+["\']',
+            # Environment variable access patterns for sensitive keys
+            r'os\.environ\[[\'"](.*(?:KEY|TOKEN|SECRET|PASSWORD).*)[\'"]\]',
+            r'os\.getenv\([\'"](.*(?:KEY|TOKEN|SECRET|PASSWORD).*)[\'"]\)',
+            r'getenv\([\'"](.*(?:KEY|TOKEN|SECRET|PASSWORD).*)[\'"]\)',
+            r'environ\.get\([\'"](.*(?:KEY|TOKEN|SECRET|PASSWORD).*)[\'"]\)'
         ]
         
         for pattern in secret_patterns:

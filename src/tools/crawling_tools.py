@@ -14,6 +14,15 @@ from datetime import datetime
 
 from fastmcp import Context
 from crawl4ai import CrawlerRunConfig, CacheMode
+from src.core.timeout_utils import with_crawler_timeout, with_batch_timeout, with_timeout, TimeoutConfig
+from src.core.validation import validate_crawl_dir_params
+
+try:
+    from qdrant_client.http.exceptions import ResponseHandlingException as QdrantException
+except ImportError:
+    # Fallback if qdrant exceptions not available
+    class QdrantException(Exception):
+        pass
 
 # Setup file logging for tools
 log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'logs')
@@ -46,8 +55,6 @@ from src.core.crawling import (
     crawl_directory,
     convert_directory_content_to_crawl_results
 )
-from src.core.timeout_utils import with_crawler_timeout, with_batch_timeout, with_timeout, TimeoutConfig
-from src.core.validation import validate_crawl_dir_params
 from src.core.processing import (
     smart_chunk_markdown,
     extract_section_info,
@@ -557,8 +564,11 @@ async def crawl_dir(
                 timeout_seconds=TimeoutConfig.CRAWLER_DIRECTORY_TIMEOUT,
                 operation_name=f"crawl directory {directory_path}"
             )
+        except asyncio.TimeoutError as timeout_error:
+            logger.exception(f"❌ Directory crawl timed out: {timeout_error}")
+            return json.dumps({"success": False, "directory": directory_path, "error": f"Directory crawl timed out: {str(timeout_error)}"}, indent=2)
         except Exception as crawl_error:
-            logger.error(f"❌ Directory crawl failed: {crawl_error}")
+            logger.exception(f"❌ Directory crawl failed: {crawl_error}")
             return json.dumps({"success": False, "directory": directory_path, "error": f"Directory crawl failed: {str(crawl_error)}"}, indent=2)
         
         if not file_results:
@@ -571,64 +581,18 @@ async def crawl_dir(
         
         await ctx.report_progress(progress=30, total=100, message="Processing files and generating chunks...")
         
-        # Process crawled content using existing pipeline
-        source_content_map = {}
-        source_word_counts = {}
-        all_urls, all_chunk_numbers, all_contents, all_metadatas = [], [], [], []
-        
-        processed_files = 0
-        for result in crawl_results:
-            try:
-                if not result.markdown or not result.url:
-                    continue
-                
-                source_url = result.url
-                md = result.markdown
-                
-                # Use existing chunking strategy
-                chunking_strategy = os.getenv("CHUNKING_STRATEGY", "smart")
-                chunks = smart_chunk_markdown(md, chunk_size=chunk_size, strategy=chunking_strategy)
-                source_id = f"local_dir:{os.path.basename(directory_path)}"
-                
-                if source_id not in source_content_map:
-                    source_content_map[source_id] = md[:5000]
-                    source_word_counts[source_id] = 0
-                
-                for i, chunk in enumerate(chunks):
-                    all_urls.append(source_url)
-                    all_chunk_numbers.append(i)
-                    all_contents.append(chunk)
-                    
-                    # Enhanced metadata for directory crawling
-                    meta = extract_section_info(chunk)
-                    meta["url"] = source_url
-                    meta["source"] = source_id
-                    meta["file_metadata"] = result.metadata  # Include original file metadata
-                    all_metadatas.append(meta)
-                    source_word_counts[source_id] += meta.get("word_count", 0)
-                
-                processed_files += 1
-                if processed_files % 10 == 0:  # Progress update every 10 files
-                    progress = 30 + (processed_files / len(crawl_results)) * 40
-                    await ctx.report_progress(progress=int(progress), total=100, message=f"Processed {processed_files}/{len(crawl_results)} files...")
-                
-            except Exception as file_error:
-                logger.warning(f"⚠️ Error processing file {result.url}: {file_error}")
-                continue
+        # Process crawled content using extracted helper function
+        source_content_map, source_word_counts, all_urls, all_chunk_numbers, all_contents, all_metadatas = await _process_crawl_results(
+            ctx, crawl_results, directory_path, chunk_size
+        )
         
         if not all_contents:
             return json.dumps({"success": False, "directory": directory_path, "error": "No valid content extracted from directory files"}, indent=2)
         
         await ctx.report_progress(progress=70, total=100, message="Updating source information...")
         
-        # Update source information
-        elapsed_time = time.time() - start_time
-        for source_id, content in source_content_map.items():
-            try:
-                summary = await extract_source_summary(source_id, content)
-                await update_source_info(qdrant_client, source_id, summary, source_word_counts.get(source_id, 0), elapsed_time)
-            except Exception as source_error:
-                logger.warning(f"⚠️ Error updating source {source_id}: {source_error}")
+        # Update source information using extracted helper function
+        await _update_sources(ctx, source_content_map, source_word_counts, start_time)
         
         await ctx.report_progress(progress=80, total=100, message="Storing documents in Qdrant...")
         
@@ -637,63 +601,18 @@ async def crawl_dir(
         
         try:
             await add_documents_to_qdrant(qdrant_client, all_urls, all_chunk_numbers, all_contents, all_metadatas, url_to_full_document)
+        except QdrantException as qdrant_error:
+            logger.exception(f"❌ Qdrant database error: {qdrant_error}")
+            return json.dumps({"success": False, "directory": directory_path, "error": f"Failed to store documents in Qdrant: {str(qdrant_error)}"}, indent=2)
         except Exception as db_error:
+            logger.exception(f"❌ Database error: {db_error}")
             return json.dumps({"success": False, "directory": directory_path, "error": f"Failed to store documents in Qdrant: {str(db_error)}"}, indent=2)
         
-        # Process code examples if enabled
-        code_examples_stored = 0
-        if os.getenv("USE_AGENTIC_RAG", "false") == "true":
-            try:
-                await ctx.report_progress(progress=85, total=100, message="Processing code examples...")
-                
-                all_code_blocks_data = []
-                for result in crawl_results:
-                    if result.markdown:
-                        code_blocks = extract_code_blocks(result.markdown)
-                        for block in code_blocks:
-                            block['source_url'] = result.url
-                            all_code_blocks_data.append(block)
-                
-                if all_code_blocks_data:
-                    # Limit code examples to prevent overload
-                    limited_code_blocks = all_code_blocks_data[:100]
-                    
-                    code_urls, code_chunk_numbers, code_examples_list, code_summaries, code_metadatas = [], [], [], [], []
-                    summary_tasks = [generate_code_example_summary(block['code'], block['context_before'], block['context_after']) for block in limited_code_blocks]
-                    summaries = await asyncio.gather(*summary_tasks, return_exceptions=True)
-                    
-                    for i, block in enumerate(limited_code_blocks):
-                        if isinstance(summaries[i], Exception):
-                            continue
-                        
-                        source_url = block['source_url']
-                        source_id = f"local_dir:{os.path.basename(directory_path)}"
-                        code_urls.append(source_url)
-                        code_chunk_numbers.append(i)
-                        code_examples_list.append(block['code'])
-                        code_summaries.append(summaries[i])
-                        code_metadatas.append({"url": source_url, "source": source_id, "language": block['language']})
-                    
-                    if code_urls:
-                        await add_code_examples_to_qdrant(qdrant_client, code_urls, code_chunk_numbers, code_examples_list, code_summaries, code_metadatas)
-                        code_examples_stored = len(code_urls)
-                        
-            except Exception as code_error:
-                logger.warning(f"⚠️ Error processing code examples: {code_error}")
+        # Process code examples using extracted helper function
+        code_examples_stored = await _process_code_examples(ctx, crawl_results, directory_path)
         
-        # Store in Neo4j if knowledge graph is enabled
-        neo4j_stored = False
-        if os.getenv("USE_KNOWLEDGE_GRAPH", "false") == "true":
-            try:
-                await ctx.report_progress(progress=90, total=100, message="Storing in Neo4j knowledge graph...")
-                repo_extractor = ctx.request_context.lifespan_context.repo_extractor
-                if repo_extractor:
-                    # Create a pseudo repo URL for directory
-                    pseudo_repo_url = f"file://{directory_path}"
-                    await repo_extractor.analyze_local_directory(directory_path, pseudo_repo_url)
-                    neo4j_stored = True
-            except Exception as neo4j_error:
-                logger.warning(f"⚠️ Error storing in Neo4j: {neo4j_error}")
+        # Store in Neo4j using extracted helper function
+        neo4j_stored = await _store_in_neo4j(ctx, directory_path)
         
         elapsed_time = time.time() - start_time
         await ctx.report_progress(progress=100, total=100, message=f"Directory crawl complete in {elapsed_time:.2f}s")
@@ -723,4 +642,171 @@ async def crawl_dir(
             "error": str(e),
             "elapsed_time_seconds": round(elapsed_time, 2)
         }, indent=2)
+
+
+async def _process_crawl_results(ctx: Context, crawl_results: List[Any], directory_path: str, chunk_size: int) -> tuple:
+    """
+    Process crawled content using existing pipeline and return structured data.
+    
+    Args:
+        ctx: Context for progress reporting
+        crawl_results: List of crawl result objects
+        directory_path: Path to the directory being crawled
+        chunk_size: Size of chunks for processing
+        
+    Returns:
+        Tuple of (source_content_map, source_word_counts, all_urls, all_chunk_numbers, all_contents, all_metadatas)
+    """
+    source_content_map = {}
+    source_word_counts = {}
+    all_urls, all_chunk_numbers, all_contents, all_metadatas = [], [], [], []
+    
+    processed_files = 0
+    for result in crawl_results:
+        try:
+            if not result.markdown or not result.url:
+                continue
+            
+            source_url = result.url
+            md = result.markdown
+            
+            # Use existing chunking strategy
+            chunking_strategy = os.getenv("CHUNKING_STRATEGY", "smart")
+            chunks = smart_chunk_markdown(md, chunk_size=chunk_size, strategy=chunking_strategy)
+            source_id = f"local_dir:{os.path.basename(directory_path)}"
+            
+            if source_id not in source_content_map:
+                source_content_map[source_id] = md[:5000]
+                source_word_counts[source_id] = 0
+            
+            for i, chunk in enumerate(chunks):
+                all_urls.append(source_url)
+                all_chunk_numbers.append(i)
+                all_contents.append(chunk)
+                
+                # Enhanced metadata for directory crawling
+                meta = extract_section_info(chunk)
+                meta["url"] = source_url
+                meta["source"] = source_id
+                meta["file_metadata"] = result.metadata  # Include original file metadata
+                all_metadatas.append(meta)
+                source_word_counts[source_id] += meta.get("word_count", 0)
+            
+            processed_files += 1
+            if processed_files % 10 == 0:  # Progress update every 10 files
+                progress = 30 + (processed_files / len(crawl_results)) * 40
+                await ctx.report_progress(progress=int(progress), total=100, message=f"Processed {processed_files}/{len(crawl_results)} files...")
+            
+        except (IOError, OSError) as io_error:
+            logger.exception(f"⚠️ I/O error processing file {result.url}: {io_error}")
+            continue
+        except Exception as file_error:
+            logger.exception(f"⚠️ Error processing file {result.url}: {file_error}")
+            continue
+    
+    return source_content_map, source_word_counts, all_urls, all_chunk_numbers, all_contents, all_metadatas
+
+
+async def _process_code_examples(ctx: Context, crawl_results: List[Any], directory_path: str) -> int:
+    """
+    Process code examples if enabled and return count of stored examples.
+    
+    Args:
+        ctx: Context for progress reporting
+        crawl_results: List of crawl result objects
+        directory_path: Path to the directory being crawled
+        
+    Returns:
+        Number of code examples stored
+    """
+    code_examples_stored = 0
+    if os.getenv("USE_AGENTIC_RAG", "false") == "true":
+        try:
+            qdrant_client = ctx.request_context.lifespan_context.qdrant_client
+            await ctx.report_progress(progress=85, total=100, message="Processing code examples...")
+            
+            all_code_blocks_data = []
+            for result in crawl_results:
+                if result.markdown:
+                    code_blocks = extract_code_blocks(result.markdown)
+                    for block in code_blocks:
+                        block['source_url'] = result.url
+                        all_code_blocks_data.append(block)
+            
+            if all_code_blocks_data:
+                # Limit code examples to prevent overload
+                limited_code_blocks = all_code_blocks_data[:100]
+                
+                code_urls, code_chunk_numbers, code_examples_list, code_summaries, code_metadatas = [], [], [], [], []
+                summary_tasks = [generate_code_example_summary(block['code'], block['context_before'], block['context_after']) for block in limited_code_blocks]
+                summaries = await asyncio.gather(*summary_tasks, return_exceptions=True)
+                
+                for i, block in enumerate(limited_code_blocks):
+                    if isinstance(summaries[i], Exception):
+                        continue
+                    
+                    source_url = block['source_url']
+                    source_id = f"local_dir:{os.path.basename(directory_path)}"
+                    code_urls.append(source_url)
+                    code_chunk_numbers.append(i)
+                    code_examples_list.append(block['code'])
+                    code_summaries.append(summaries[i])
+                    code_metadatas.append({"url": source_url, "source": source_id, "language": block['language']})
+                
+                if code_urls:
+                    await add_code_examples_to_qdrant(qdrant_client, code_urls, code_chunk_numbers, code_examples_list, code_summaries, code_metadatas)
+                    code_examples_stored = len(code_urls)
+                    
+        except Exception as code_error:
+            logger.warning(f"⚠️ Error processing code examples: {code_error}")
+    
+    return code_examples_stored
+
+
+async def _store_in_neo4j(ctx: Context, directory_path: str) -> bool:
+    """
+    Store directory data in Neo4j knowledge graph if enabled.
+    
+    Args:
+        ctx: Context for progress reporting
+        directory_path: Path to the directory being crawled
+        
+    Returns:
+        True if successfully stored, False otherwise
+    """
+    neo4j_stored = False
+    if os.getenv("USE_KNOWLEDGE_GRAPH", "false") == "true":
+        try:
+            await ctx.report_progress(progress=90, total=100, message="Storing in Neo4j knowledge graph...")
+            repo_extractor = ctx.request_context.lifespan_context.repo_extractor
+            if repo_extractor:
+                # Create a pseudo repo URL for directory
+                pseudo_repo_url = f"file://{directory_path}"
+                await repo_extractor.analyze_local_directory(directory_path, pseudo_repo_url)
+                neo4j_stored = True
+        except Exception as neo4j_error:
+            logger.warning(f"⚠️ Error storing in Neo4j: {neo4j_error}")
+    
+    return neo4j_stored
+
+
+async def _update_sources(ctx: Context, source_content_map: Dict[str, str], source_word_counts: Dict[str, int], start_time: float):
+    """
+    Update source information in Qdrant.
+    
+    Args:
+        ctx: Context for access to Qdrant client
+        source_content_map: Map of source IDs to content
+        source_word_counts: Map of source IDs to word counts
+        start_time: Start time for elapsed time calculation
+    """
+    qdrant_client = ctx.request_context.lifespan_context.qdrant_client
+    elapsed_time = time.time() - start_time
+    
+    for source_id, content in source_content_map.items():
+        try:
+            summary = await extract_source_summary(source_id, content)
+            await update_source_info(qdrant_client, source_id, summary, source_word_counts.get(source_id, 0), elapsed_time)
+        except Exception as source_error:
+            logger.warning(f"⚠️ Error updating source {source_id}: {source_error}")
 
